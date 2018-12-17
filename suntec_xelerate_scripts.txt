@@ -1,0 +1,890 @@
+set +x
+this_command=""
+previous_command=""
+EncryptCommon="NO"
+cd /var/lib/jenkins/jobs/FUNCTION_1.2_PL/workspace
+dpNos=$(cat temp/dpName.txt|wc -l)
+if [ "$dpNos" == 1 ]; then
+dpName=$(cat temp/dpName.txt)
+dpName=${dpName:07:4}
+fi
+function mailAbnormalTerminate {
+	echo
+	echo Last command executed:
+	echo $previous_command
+	cd $WORKSPACE
+	tail -30 ../builds/$BUILD_NUMBER/log > temp/buildLogTail.txt 
+	echo $(date): Abnormal terminate.
+	
+	MailAdress="";
+	IFS=',' read -a array <<< "$BuildFailMail"
+    	for element in "${array[@]}"
+	do
+		MailAdress="$MailAdress""$element@suntecgroup.com "
+	done
+	echo mailing build Abnormal terminate to $MailAdress
+		
+	cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/BuildAbonrmalTerminateMail.txt ../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	sed -i '/@BuildLog@/r  temp/buildLogTail.txt' ../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	sed -i '/@BuildLog@/d' ../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	echo : "Failed"
+	#mailx -s " $JOB_NAME : Build Terminated" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	mailx -s " XELERATE_2.3$dpName : Build Terminated" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	exit 100
+}
+
+#set -e
+trap 'mailAbnormalTerminate' ERR
+trap 'previous_command=$this_command; this_command=$BASH_COMMAND' DEBUG
+
+
+cd $WORKSPACE
+if [ -d "temp" ];then
+    rm -r temp
+fi
+mkdir temp
+
+cd $WORKSPACE
+mkdir ../builds/$BUILD_NUMBER/mails
+startTime=$(date)
+repoUrl=$GIT_URL
+branchName=$GIT_BRANCH 
+headCommit=$GIT_COMMIT
+shopt -s extglob
+branchName="${branchName##*( )}"
+shopt -u extglob
+
+baseLabel=RELEASE_FLOATING
+basePackFolder="$JOB_NAME"_Base
+basePackName="$JOB_NAME"_Base
+deltaLabel="$JOB_NAME"_DELTA
+deltaPackFolder="$JOB_NAME"_Delta
+deltaPackName="$JOB_NAME"_Delta
+
+JenkinsProject=XELERATE_2.3
+BranchNameC="origin/XELERATE_2.3"
+AppServer=JBoss
+EARType=TBMS_F
+ServerName=sbstpvmlx2010 
+releaseServer=sbstpvmlx833  
+OraVersion=11g
+verifyScript=N
+pmsDB=PRODPMS
+TestTools=None
+ReleaseMail=release_helpdesk
+ConsReleaseMail=product_sprint_leaders,release_helpdesk,quality,product_sprint_leads,product_tech_managers,product_sprint_team,divyavs,greeshmask,rekhamenon,pda_test_mgr_leads,sreejiths,rakeshrb,prabus,anjalibn,ashnamr,rencypa,annaf,shafinan
+BuildFailMail=release_helpdesk
+#ConsReleaseMail=amalg
+#ReleaseMail=amalg
+#BuildFailMail=amalg
+
+baseSetupfile="XLRT_Main_Setup.txt"
+deltaSetupfile="XLRT_Main_Setup.txt"
+DBObjectPath="DB-INSTALLATION/DBObjects-ORCL"
+rootPack1="DB-INSTALLATION"
+
+cd $WORKSPACE
+upperAppServer=`echo "$AppServer" | tr '[:lower:]' '[:upper:]'`
+
+if [ -d ../builds/lastSuccessfulBuild ];then
+  	deltaCommitIDRef=`cat ../builds/lastSuccessfulBuild/headCommit| (head -n1)`
+  	echo $deltaCommitIDRef  	  		
+  	if ((xxx=`/usr/bin/git rev-list -1 $deltaLabel`));then
+  	echo " toVerifyTagging"
+  	  deltaCommitID=$(/usr/bin/git rev-list -1 $deltaLabel)  	  
+  	  if  [ "$deltaCommitID" != "$deltaCommitIDRef" ]; then
+  	     echo "Delta commit in DB not matching with commit id of lastSuccessfulBuild  "
+  	     mailAbnormalTerminate
+  	  fi
+  	else
+  		deltaCommitID=$deltaCommitIDRef  		
+  	fi 	
+else
+	set -x
+	/usr/bin/git tag -f "$JOB_NAME"_DELTA  $baseLabel
+	deltaCommitID=$(/usr/bin/git rev-list -1 $deltaLabel)	
+	echo $(date): Automation: "Successfully tagged. "	
+	set +x
+fi
+
+cd $WORKSPACE
+baseCommitID=$(/usr/bin/git rev-list -1 $baseLabel)
+
+cd $WORKSPACE
+if [ "$branchName" != "$BranchNameC" ]; then
+  echo "Current repository branch name $branchName not matching with configure Branch $BranchNameC"
+   mailAbnormalTerminate
+fi
+
+if [ "$OraVersion" == "11g" ]; then
+   echo
+elif [ "$OraVersion" == "10g" ]; then
+   echo
+else
+   echo Oracle version $OraVersion specified for the project is wrong.
+   mailAbnormalTerminate
+fi
+
+if [ "$pmsDB" == "PRODPMS" ]; then
+	pmsConfig="PRODPMSConfig.properties"
+elif [ "$pmsDB" == "CSPMS" ]; then
+	pmsConfig="CSPMSConfig.properties"
+else
+   echo "PMS DB "$pmsDB is not valid.
+   mailAbnormalTerminate
+fi
+
+if [ "$verifyScript" == "Y" ]; then
+	echo
+elif [ "$verifyScript" == "N" ]; then
+	echo
+else
+   echo verifyScript must be Y or N
+   mailAbnormalTerminate
+fi
+
+if [ "$EARType" == "TBMS_F" ]; then
+	echo
+elif [ "$EARType" == "TBMS_T" ]; then
+	echo
+else
+   echo EAR must be TBMS_F orTBMS_T
+   mailAbnormalTerminate
+fi
+
+IFS=',' read -a array <<< "$TestTools"
+for element in "${array[@]}"
+do
+	if [ "$element" == "Junit" ]; then
+	  echo
+	elif [ "$element" == "None" ]; then
+	  echo
+	else
+	   echo "Unknown test tool specified $element"
+	   mailAbnormalTerminate
+	fi
+done
+
+
+
+echo
+echo
+echo StartTime			$startTime
+echo Job name			$JOB_NAME
+echo Repository         $repoUrl
+echo Branch name		$branchName
+echo Build commit ID	$headCommit
+echo Base commit ID		$baseCommitID
+echo delta commit id    $deltaCommitID
+echo Appserver          $AppServer
+echo EAR                $EARType
+echo Deployment Server  $ServerName
+echo Oracle Version     $OraVersion
+echo
+
+echo
+
+echo $(date): Automation : Generating pms list from commits of platform repository.
+cd $WORKSPACE
+
+if !(ssh jenkins1@$releaseServer "[ -d $JOB_NAME ]"); then
+   ssh jenkins1@$releaseServer mkdir -p $JOB_NAME/Draft/PMS_TESTING_PACK
+   echo base setup created
+   #exit 0
+fi
+
+pmsList=""
+	while read -r line
+    do
+	if ((p1=`expr index "$line" [`));then
+	  if ((p2=`expr index "$line" ]`));then
+	    length=`expr $p2 - $p1` 
+	    length=`expr $length - 5`
+	    p1=`expr $p1 + 4`
+
+	    PmsNo=${line:$p1:$length}
+	    IFS=', ' read -a array <<< "$PmsNo"
+	    for element in "${array[@]}"
+		do
+		    pmsList="$pmsList""$element",
+		done
+	  fi
+	fi
+    done  < <( /usr/bin/git rev-list --pretty=format:%s $baseCommitID..$headCommit)   
+    
+	pmsList=\"$pmsList\"
+	echo " PMSList $pmsList"
+    
+    cd $WORKSPACE
+    
+    echo $(date): Automation : Identifying PMS in status 'Module test passed'
+    java -Xms50M -Xmx200M -jar $HOME/pmsTest/VerifyPMS_New.jar $JENKINS_HOME/pmsTest/$pmsConfig $pmsList >temp/ModuleTestPassed.org
+    cat temp/ModuleTestPassed.org|sort|uniq >temp/ModuleTestPassedPMS.txt	
+    chmod 777 -R temp
+    sed -i 's#null#NA#g' temp/ModuleTestPassedPMS.txt
+    #cat temp/ModuleTestPassed.org|sort|uniq >$packFolder/ModuleTestPassed.txt
+	
+
+cd $WORKSPACE
+if grep -i  "Started by timer" ../builds/$BUILD_NUMBER/log; then
+	if (aaa=`/usr/bin/git rev-list -n 1 "$JOB_NAME"_Last_Build`); then		
+		lastBuildCommitID=$(/usr/bin/git rev-list -n 1 "$JOB_NAME"_Last_Build)
+		baseCommit=$(/usr/bin/git rev-list -n 1 "$baseLabel")
+		echo "commit id is set to '$lastBuildCommitID'"		
+		echo "commit id is set to '$baseCommit'"												
+	else 		
+		lastBuildCommitID=$(/usr/bin/git rev-list -n 1 $baseLabel)
+		/usr/bin/git tag -f "$JOB_NAME"_Last_Build $lastBuildCommitID
+	fi	
+	cd $WORKSPACE
+	if [[ "$baseCommit" != "$headCommit" ]]; then	
+		echo " There is new commits has been made after the "$lastBuildCommitID" commit. So build continues"
+		echo " Product Y" >> $JENKINS_HOME/Verification.txt
+	else
+		echo " Build started automatically and new commits are not available after the "$baseCommit" commit. So build stopped"
+		#exit 1
+	fi
+else
+	echo " Product Y" >> $JENKINS_HOME/Verification.txt
+	echo " Build started by user. So the build continues"
+fi
+
+
+cd $WORKSPACE
+
+
+if [ -f "startMark" ];then
+	rm startMark
+fi
+echo $(date) >startMark 
+
+export PATH=$PATH:/etc/alternatives
+
+
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanup.sh
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/deploy.sh
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/setupdb.sql
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanDB.sql
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/wrapsql.sh
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/pmsStatusCheck.sh
+
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanup.sh
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/deploy.sh
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/setupdb.sql
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanDB.sql
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/wrapsql.sh
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/pmsStatusCheck.sh
+
+
+cd $WORKSPACE
+/usr/bin/git tag -f "$JOB_NAME"_Last_Build $headCommit
+
+scriptBase="none"
+setupfile="none"
+for baseNo in 1 2
+do
+    #This is for delta based on last successful build
+    if [ $baseNo -eq 1 ]; then
+    	scriptBase=$deltaLabel
+    	scriptCommitID=$deltaCommitID    
+    	packFolder="$WORKSPACE"/"$deltaPackFolder"    	
+    	setupfile=$packFolder/$DBObjectPath/Main/Schema/$deltaSetupfile  
+    	packName=$deltaPackName     	
+        scriptMessage="modified after last successful build."
+    fi
+    
+    #This is for delta based on last base created manually
+    if [ $baseNo -eq 2 ]; then
+    	scriptBase=$baseLabel
+    	scriptCommitID=$baseCommitID
+    	packFolder="$WORKSPACE"/"$basePackFolder"
+    	setupfile=$packFolder/$DBObjectPath/Main/Schema/$baseSetupfile	
+    	packName=$basePackName        	
+    	scriptMessage="modified after current build base marked in repository."
+    fi    
+    
+    
+	cd $WORKSPACE
+	echo ""
+	if  [ "$BuildErrors" == "No" ];then
+		echo $(date): Automation : Packing Application $packName
+	else
+		echo $(date): Automation : $BuildErrors.
+		echo $(date): Automation : Packing DB scripts and packages for verification [ $packName ]		
+	fi
+	if [ -d "wrapsql" ];then
+	    rm -r wrapsql
+	fi
+	mkdir wrapsql
+	
+	if [ -d $packFolder ];then
+		rm -rf $packFolder
+	fi	
+	mkdir -p $packFolder
+	
+	cd $WORKSPACE
+	
+	/usr/bin/git diff --diff-filter=MACR --name-only $scriptCommitID $headCommit > temp/files.txt	
+	
+	#DataPatchInfoCopyBelow
+	
+	PatchinfoPath="$JENKINS_HOME/jobs/BuildFiles/XELERATE_2.3/PatchInfoCB"		
+	echo $(date): Automation : Copying Data Patch Info to pack
+	target="$packFolder/DB-INSTALLATION/Product/CORPORATE-BANKING/DBObjects-ORCL/Data" 
+	if ! [ -d "$target" ]; then  
+	mkdir -p "$target"
+	fi 
+	echo "     Copying DataPatchInfo to $target"    
+	cp -rf $PatchinfoPath/Data_XLRT_patch_info.txt $target
+	
+	#DataPatchInfoCopyAbove
+	while read -r line
+	do						  		  
+  		while read -r line1
+ 		do 
+  			if grep -i "$line1" temp/files.txt; then
+  				echo $(date): Automation : Copying Data scripts to pack
+  				target="$packFolder/DB-INSTALLATION/Product/$line/DBObjects-ORCL/Data" 
+	  			if ! [ -d "$target" ]; then  
+	      			mkdir -p "$target"
+	  			fi 
+       			echo "     $line1 to $target"    
+       			cp --preserve=timestamps -f  "$line1" "$target"
+   			fi
+  		done  < <(find "$line/DBObjects-ORCL/Data" -type f -print)
+  		while read -r line2
+ 		do 
+  			if grep -i "$line2" temp/files.txt; then
+  				echo $(date): Automation : Copying Data scripts to pack
+  				target="$packFolder/DB-INSTALLATION/Product/$line/DBObjects-ORCL/Alter" 
+	  			if ! [ -d "$target" ]; then  
+	      			mkdir -p "$target"
+	  			fi 
+       			echo "     $line2 to $target"    
+       			cp --preserve=timestamps -f  "$line2" "$target"
+   			fi
+  		done  < <(find "$line/DBObjects-ORCL/Alter" -type f -print)
+	done < <(ls -1 ./)
+  	
+  	while read -r line
+  	do
+  		
+  		if [ "$line" != "DigitalServices" ]; then
+  		#if [ "$line" != "INVESTMENT-SERVICES" ]; then
+		  	if grep -i "$line/UserInterface" temp/files.txt > temp/userFiles.txt; then
+				sed -i "s/.*/cp --parents '&' uifolder/" temp/userFiles.txt
+				sed -i "s@uifolder@$packFolder@" temp/userFiles.txt
+				chmod 777 temp/userFiles.txt
+				if ! [ -d "$packFolder/DB-INSTALLATION/Product/$line/UserInterface" ]; then
+					mkdir -p "$packFolder/DB-INSTALLATION/Product/$line/UserInterface"
+				fi
+				./temp/userFiles.txt
+				cp -rf "$packFolder/$line/UserInterface"/* $packFolder/DB-INSTALLATION/Product/$line/UserInterface
+				rm -rf $packFolder/$line
+			fi
+		fi
+	done < <(ls -1 ./)  	
+  	
+  	while read -r line
+  	do
+		if grep -i "/Setup/" temp/files.txt >> temp/Setup.txt; then
+			sed -i "/Obsolete/d" temp/Setup.txt		
+			sed -i "s/.*/cp --parents '&' folder/" temp/Setup.txt
+			sed -i "s@folder@$packFolder@" temp/Setup.txt		
+			chmod 777 temp/Setup.txt
+			./temp/Setup.txt
+			if [ -d "$packFolder/$line" ]; then
+				cp -rf "$packFolder/$line"/* $packFolder/DB-INSTALLATION/Product
+				rm -rf $packFolder/$line
+			fi
+		fi
+	done < <(ls -1 ./)
+		
+	cd $WORKSPACE
+	echo $(date): Automation : Verifying duplicate directories created due to case sensitivity of unix.
+	duplicateDir="False"
+	while read -r line
+	do
+	  echo $line
+	  duplicateDir="True"
+	done  < <(find  . -type d|sort| uniq -c -i -d)
+	
+	while read -r line
+	do
+	  echo $line
+	  duplicateDir="True"
+	done  < <(find  $packFolder -type d|sort| uniq -c -i -d)
+	
+	if [ $duplicateDir == "True" ];then
+		echo Directories listed above created in duplicate due to case sensitivity. Make required corrections.
+	    mailAbnormalTerminate
+	fi
+	
+	echo $(date): Automation : Checking for old files.
+	# verify pack for old files
+	#elapsedSec=$( expr  $(date +%s) - $(date +%s -r startMark) )
+	#elaspedMin=$( expr $elapsedSec / 60 )
+	#find $packFolder -cmin +30 -print
+
+   if grep -i "^PatchName" temp/ModuleTestPassed.org > temp/patchno.txt ; then
+		sed -i 's/PatchName//g' temp/patchno.txt
+		patchID=`cat temp/patchno.txt| (head -n1)`
+	else
+	   echo $(date): Automation :Patch name could not be resolved.
+	   exit 1
+	fi	
+	if [ "$patchID" == "null" ]; then
+		patchID=`cat /var/lib/jenkins/jobs/FUNCTION_1.2_PL/workspace/temp/patchno.txt| (head -n1)`
+		patchID=${patchID:13:3}
+		patchID=XELERATE_2.3.$patchID
+	fi
+	
+	echo patch number $patchID
+	echo $(date): Automation : Creating Zip file.
+					
+	cd $WORKSPACE
+	if [ -d "$packFolder" ]; then
+		chmod 777 $packFolder
+		
+		cd $packFolder
+		if [ -d "$patchID" ]; then
+			rm -rf "$patchID"
+		fi
+		mkdir -p ./"$patchID"
+		while read -r line
+		do		
+			if [ "$line" != "$patchID" ]; then			
+				echo " $line directory created inside $patchID."
+				mv "$line" "$patchID"/
+				echo "$line" moved to $patchID		
+			fi
+		done < <(ls -1 ./)
+	
+		zip -r "$patchID".zip *
+	fi
+	
+	#cd $packFolder
+	#if [ -d "$patchID" ]; then
+		#rm -rf "$patchID"
+	#fi
+	#mkdir -p ./"$patchID"
+	#while read -r line
+	#do		
+		#if [ "$line" != "$patchID" ]; then			
+			#echo " $line directory created inside $patchID."
+			#mv "$line" "$patchID"/
+			#echo "$line" moved to $patchID		
+		#fi
+	#done < <(ls -1 ./)
+	
+	#zip -r "$patchID".zip *	
+	
+	echo $(date): Automation : End packing $packName
+		
+done
+#pack ends	
+
+cd $WORKSPACE
+#if `grep -i --fixed-strings "Module test passed." "./temp/ModuleTestPassedPMS.txt" > temp/xxxx.txt` ;then	   
+		
+	cd $WORKSPACE
+	/usr/bin/git tag -f "$JOB_NAME"_DELTA $headCommit			
+	echo $headCommit >../builds/$BUILD_NUMBER/headCommit		
+	cd $WORKSPACE
+	
+	
+	dateString=`date +%Y-%m-%d`		
+	echo " pack folders created in target server"			
+	cd $WORKSPACE/$deltaPackFolder			
+	var2=$patchID"_"		
+	var1=`ssh jenkins1@$releaseServer ls -d $JOB_NAME/Draft/PMS_TESTING_PACK/$var2*|sort -r 2>&1 | (head -n1)`
+	#var3="${var1/$var2/}"			
+	#var4=${var3:1:3}
+	var4=${var1: -13:3}			
+	var5=`expr $var4 + 1`
+	printf -v var6 "%03d" $var5
+	dat=`date +"%m-%d-%y"`
+	var7=$var2"R"$var6"["$dat"]"
+	var8=$var2"R"$var6
+	ssh jenkins1@$releaseServer mkdir -p $JOB_NAME/Draft/PMS_TESTING_PACK/"$var7"
+	scp -p -r "$patchID".zip jenkins1@$releaseServer:$JOB_NAME/Draft/PMS_TESTING_PACK/"$var7"/"$var7".zip
+	
+	cd $WORKSPACE/$basePackFolder			
+	ssh jenkins1@$releaseServer mkdir -p $JOB_NAME/Draft/ST_PACK/$var7
+	scp -p -r "$patchID".zip jenkins1@$releaseServer:$JOB_NAME/Draft/ST_PACK/"$var7"/"$patchID".zip		
+	
+	
+	########
+	
+	cd $WORKSPACE
+		
+	sed -i "/PMS_TESTING_PACK/d" ./temp/ModuleTestPassedPMS.txt
+	sed -i "/ST_PACK/d" ./temp/ModuleTestPassedPMS.txt
+	cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/ReleaseMail.txt ../builds/$BUILD_NUMBER/mails/
+	sed -i "/@listPms@/r ./temp/ModuleTestPassedPMS.txt" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+	sed -i '/@listPms@/d' ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt		
+	sed -i "s/Project/$JOB_NAME/" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+	sed -i "s/PackName/ST_PACK/" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+	sed -i "s/xactPath/$var7/" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+	sed -i "/Status/d" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt		
+	#sed -i "/PMS_TESTING_PACK/d" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+	#sed -i "/ST_PACK/d" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+	#sed -i "/So Please/i \All of the PMS's in this Patch plan is in MTP status." ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		
+		
+	##############
+	
+	MailAdress="";
+	IFS=',' read -a array <<< "$ReleaseMail"
+    for element in "${array[@]}"
+	do
+		MailAdress="$MailAdress""$element@suntecgroup.com "
+	done
+	echo mailing release note to $MailAdress
+	#mailx -s " $JOB_NAME : Release for PMS test" $MailAdress <../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+	mailx -s " XELERATE_2.3$dpName : Release for PMS test" $MailAdress <../builds/$BUILD_NUMBER/mails/ReleaseMail.txt	
+	
+	
+	########
+	
+	#java -jar $JENKINS_HOME/pmsTest/GetDPNo.jar $JENKINS_HOME/pmsTest/$pmsConfig $pmsList > temp/dpLog.txt
+			
+	cat temp/dpLog.txt|sort|uniq > temp/dpName.txt
+	rm -rf temp/dpLog.txt
+	dpNos=$(cat temp/dpName.txt|wc -l)
+	
+	if [ "$dpNos" == 1 ]; then
+		dpName1=$(cat temp/dpName.txt)
+		dpName1=${dpName:07:4}
+	fi
+	
+	if [ -f "$JENKINS_HOME/Verification.txt" ]; then	
+	
+	for pack in 1 2
+	do
+		if [ "$pack" == 1 ]; then
+			pack=PMS_TESTING_PACK
+		fi
+		if [ "$pack" == 2 ]; then
+			pack=ST_PACK
+		fi
+		
+			if grep -i --fixed-strings Platform $JENKINS_HOME/Verification.txt; then
+				platformAuth=$(grep --fixed-strings Platform "$JENKINS_HOME/Verification.txt")
+				IFS=' ' read -a array <<< "$platformAuth"
+				plAuthentification=${array[1]}
+				if [ "$plAuthentification" == Y ]; then
+					folderName1=`ssh jenkins1@sbstpvmlx833 ls -d --sort=time /home1/jenkins1/PLATFORM_6.1_PL/Draft/$pack/* | head -n1`
+					fileName1=`ssh jenkins1@sbstpvmlx833 ls $folderName1`
+					echo $(date) : Automation : Copying $fileName1 from sbstpvmlx833 server to 824 for consolidation purpose.
+					rm -rf $JENKINS_HOME/jobs/ForCons/Platform/*
+					scp -r jenkins1@sbstpvmlx833:$folderName1/$fileName1 $JENKINS_HOME/jobs/ForCons/Platform
+					platformPackPath="$JENKINS_HOME/jobs/ForCons/Platform"
+				else
+					platformPackPath=
+				fi
+			fi
+			
+			if grep -i --fixed-strings Function $JENKINS_HOME/Verification.txt; then
+				functionAuth=$(grep --fixed-strings Function "$JENKINS_HOME/Verification.txt")
+				IFS=' ' read -a array <<< "$functionAuth"
+				fnAuthentification=${array[1]}
+				if [ "$fnAuthentification" == Y ]; then
+					folderName2=`ssh jenkins1@sbstpvmlx833 ls -d --sort=time /home1/jenkins1/FUNCTION_1.2_PL/Draft/$pack/* | head -n1`
+					fileName2=`ssh jenkins1@sbstpvmlx833 ls $folderName2`
+					echo $(date) : Automation : Copying $fileName2 from sbstpvmlx833 server to 824 for consolidation purpose.
+					rm -rf $JENKINS_HOME/jobs/ForCons/Function/*
+					scp -r jenkins1@sbstpvmlx833:$folderName2/$fileName2 $JENKINS_HOME/jobs/ForCons/Function
+					functionPackPath="$JENKINS_HOME/jobs/ForCons/Function"
+				else
+					functionPackPath=
+				fi
+			fi
+			
+			if grep -i --fixed-strings Product $JENKINS_HOME/Verification.txt; then
+				productAuth=$(grep --fixed-strings Product "$JENKINS_HOME/Verification.txt")
+				IFS=' ' read -a array <<< "$productAuth"
+				prAuthentification=${array[1]}
+				if [ "$prAuthentification" == Y ]; then
+					folderName3=`ssh jenkins1@sbstpvmlx833 ls -d --sort=time /home1/jenkins1/$JOB_NAME/Draft/ST_PACK/* | head -n1`
+					fileName3=`ssh jenkins1@sbstpvmlx833 ls $folderName3`
+					echo $(date) : Automation : Copying $fileName3 from sbstpvmlx833 server to 824 for consolidation purpose.
+					rm -rf $JENKINS_HOME/jobs/ForCons/Product/*
+					scp -r jenkins1@sbstpvmlx833:$folderName3/$fileName3 $JENKINS_HOME/jobs/ForCons/Product
+					productPackPath="$JENKINS_HOME/jobs/ForCons/Product"
+				else
+					productPackPath=P_null
+				fi
+			fi
+			
+			#java -jar $JENKINS_HOME/pmsTest/GetDPNo.jar $JENKINS_HOME/pmsTest/$pmsConfig $pmsList > temp/dpLog.txt
+			
+			#cat temp/dpLog.txt|sort|uniq > temp/dpName.txt
+			#rm -rf temp/dpLog.txt
+			#dpNos=$(cat temp/dpName.txt|wc -l)
+			
+			#if [ "$dpNos" == 1 ]; then
+				#dpName=$(cat temp/dpName.txt)
+				#dpName=${dpName:11:2}
+			#fi
+					
+			echo $(date): Automation : "Consolidation(Platform+Function+Product)"
+			#java -jar $JENKINS_HOME/jobs/ForCons/XLRT_REL_CON_AUT.jar "$JENKINS_HOME/jobs/ForCons/Platform" "$JENKINS_HOME/jobs/ForCons/Function" "$JENKINS_HOME/jobs/ForCons/Product"
+			java -jar $JENKINS_HOME/jobs/ForCons/XLRT_REL_CON_AUT_2.0.jar "$platformPackPath" "$functionPackPath" "$productPackPath" "$dpName"
+			echo $(date) : Automation : Consolidation completed successfully.
+			
+			if !(ssh jenkins1@$releaseServer "[ -d "/home1/jenkins1/Consolidated/$JOB_NAME/$pack" ]"); then
+				ssh jenkins1@$releaseServer mkdir -p /home1/jenkins1/Consolidated/$JOB_NAME/$pack
+			fi
+			
+			
+			
+			folderName4=`ls -d --sort=time /var/lib/jenkins/jobs/ForCons/Release/* | head -n1`
+			scp -r $folderName4 jenkins1@sbstpvmlx833:/home1/jenkins1/Consolidated/$JOB_NAME/$pack
+			
+			######## MARIA on 3/17/2018 ##########
+			
+			#echo $patchID $var7
+			
+			#cp -r $folderName4 $JENKINS_HOME/jobs/ConvertedPacks/
+			#currentName=`ls -d --sort=time /var/lib/jenkins/jobs/ConvertedPacks/* | head -n1`
+	    	#mv $currentName /var/lib/jenkins/jobs/ConvertedPacks/pack
+			
+			#ConPack=/var/lib/jenkins/jobs/ConvertedPacks/pack/
+			#cd $ConPack
+			#unzip XELERATE2.3.zip
+			
+			#java -jar $JENKINS_HOME/jobs/Jars/OTM.jar $ConPack XELERATE2.3  $JENKINS_HOME/jobs/MARIADB/ MARIA
+			
+			#rm -rf /var/lib/jenkins/jobs/ConvertedPacks/*
+			#echo $(date) : Automation : maria DB conversion completed successfully.
+			
+			#cd /var/lib/jenkins/jobs/MARIADB	
+			   		
+			#zip -r XELERATE2.3.zip  XELERATE2.3
+			#rm -rf XELERATE2.3
+				
+			#if !(ssh jenkins1@$releaseServer "[ -d "/home1/jenkins1/Consolidated/$JOB_NAME/MARIA" ]"); then
+				#ssh jenkins1@$releaseServer mkdir -p /home1/jenkins1/Consolidated/$JOB_NAME/MARIA
+			#fi
+			
+			#if !(ssh jenkins1@$releaseServer "[ -d "/home1/jenkins1/Consolidated/$JOB_NAME/MARIA/$var7$patchID" ]"); then
+				#ssh jenkins1@$releaseServer mkdir -p /home1/jenkins1/Consolidated/$JOB_NAME/MARIA/$var7$patchID
+			#fi
+			
+			#ConvPack=`ls -d --sort=time /var/lib/jenkins/jobs/MARIADB/* | head -n1`
+			#scp -r $ConvPack jenkins1@sbstpvmlx833:/home1/jenkins1/Consolidated/$JOB_NAME/MARIA/"$var7$patchID"
+			
+			
+			
+			
+			
+			
+			##################
+			
+			
+			
+					
+			
+			fold=${folderName4##*/}
+			fold="$JOB_NAME/$pack/$fold"
+			
+			packName=`ls $folderName4`
+			packName=${packName%.*}
+			
+			
+			cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/ConsMail.txt ../builds/$BUILD_NUMBER/mails/
+			sed -i "s@consPack@$fold@" ../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			#sed -i "s@packName@$JOB_NAME@" ../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			sed -i "s@packName@$JOB_NAME$dpName@" ../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			
+			if grep -i "Module test passed." $JENKINS_HOME/jobs/PLATFORM_6.1_PL/workspace/temp/ModuleTestPassedPMS.txt >temp/consPMS.txt; then
+				sed -i "1 i Platform" temp/consPMS.txt
+				sed -i "2 i --------" temp/consPMS.txt
+				echo "" >>temp/consPMS.txt
+				echo "Function" >>temp/consPMS.txt
+				echo "--------" >>temp/consPMS.txt
+			else
+				echo "Platform" >>temp/consPMS.txt
+				echo "--------" >>temp/consPMS.txt
+				echo "No MTP Status PMS's in Platform Layer." >>temp/consPMS.txt
+				echo "" >>temp/consPMS.txt
+				echo "Function" >>temp/consPMS.txt
+				echo "--------" >>temp/consPMS.txt
+			fi
+			if grep -i "Module test passed." $JENKINS_HOME/jobs/FUNCTION_1.2_PL/workspace/temp/ModuleTestPassedPMS.txt >>temp/consPMS.txt; then
+				echo "" >>temp/consPMS.txt
+				echo "Product" >>temp/consPMS.txt
+				echo "--------" >>temp/consPMS.txt
+			else			
+				echo "No MTP Status PMS's in Function Layer." >>temp/consPMS.txt
+				echo "" >>temp/consPMS.txt
+				echo "Product" >>temp/consPMS.txt
+				echo "--------" temp/consPMS.txt
+			fi
+			if grep -i "Module test passed." $WORKSPACE/temp/ModuleTestPassedPMS.txt >>temp/consPMS.txt; then
+				echo "available"
+			else			
+				echo "No MTP Status PMS's in Product Layer." >>temp/consPMS.txt
+			fi
+			
+			echo "" >>../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			echo "" >>../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			cat temp/consPMS.txt >>../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			
+			## PMS TESTING PACK MAIL DISABLED
+			
+			if [[ $pack == ST_PACK ]]; then
+				
+				MailAdress="";
+				IFS=',' read -a array <<< "$ConsReleaseMail"
+			    for element in "${array[@]}"
+				do
+					MailAdress="$MailAdress""$element@suntecgroup.com "	
+				done
+				echo mailing release note to $MailAdress
+				ssh jenkins1@sbstpvmlx833 "/home1/jenkins1/Consolidated/PL_SCRIPTS/scrpt.sh"
+				mailx -s " XELERATE_2.3$dpName : Latest XELERATE2.3"$dpName" pack for testing" $MailAdress <../builds/$BUILD_NUMBER/mails/ConsMail.txt
+				echo $(date): Automation : Promoting PMS in status 'Module test passed'
+				java -Xms50M -Xmx200M -jar $HOME/pmsTest/PromotePMS.jar $JENKINS_HOME/pmsTest/$pmsConfig $pmsList >temp/PromotePMS.txt
+			fi
+		done
+		
+		#Below set of code is handles in XELERATE_INSTALLER job
+		#-------------------------------------------------------------------------------------
+		##Newly written for cons purpose
+		##Cor below for patch C
+		##if grep -v "PMS_TESTING_PACK" $WORKSPACE/temp/ModuleTestPassedPMS.txt && grep -i "ST_PACK" $WORKSPACE/temp/ModuleTestPassedPMS.txt; then
+			##echo "Consolidation of $varA $varB $varC"
+			##java -jar con*.jar "consPackPathOfPatchA" "consPackPathOfPatchB" "consPackPathOfPatchC"
+		##fi
+		
+		##echo $(date) : Automation : " Copying Consolidated pack($folderName4/$packName) to sbstpvmlx1314 server."
+		##scp -r $folderName4/* suntec@sbstpvmlx1314:/home/suntec
+		##echo $(date) : Automation : Executing Executer.sh
+		###ssh suntec@sbstpvmlx1314 "/home/suntec/Executer.sh Y $packName > AutoLog/jenLog.txt" 
+		##ssh suntec@sbstpvmlx1314 "/home/suntec/Executer.sh Y $packName"
+	
+		##TEST
+		
+		##folderName4=`ls -d --sort=time /var/lib/jenkins/jobs/ForCons/Release/* | head -n1`
+	                ##packName=`ls $folderName4/CB`
+	               ##packName=${packName%.*}
+	 		##echo $(date) : Automation :" CB and IB  are there so copying Consolidated pack($folderName4/CB/$packName) to sbstpvmlx1314 server."
+			##scp -r $folderName4/CB/* suntec@sbstpvmlx1314:/home/suntec
+			##echo $(date) : Automation : Executing Executer.sh with CB Pack	
+			##echo $(date) : Automation : "ssh suntec@sbstpvmlx1314 /home/suntec/Executer.sh Y $packName"		
+			##ssh suntec@sbstpvmlx1314 "/home/suntec/Executer.sh Y $packName > AutoLog/jenLog.txt"
+		
+		
+		##TEST
+		
+		##Deplyment Activitied starts here below:
+		
+		##: '
+		###Reverting to Base Snap Above
+		#echo $(date) : Automation : Deployment Is Starting So Executing Reverting to Base Snap. 
+		#echo $(date) : Automation : "ssh suntec@sbstpvmlx1314 /home/suntec/Revertsnap.sh"
+		#ssh suntec@sbstpvmlx1314 "/home/suntec/Revertsnap.sh" &
+		#echo "Snap is going to revert"
+		#sleep 2m
+		#echo "Snap reverted Successfully"
+	
+		#echo $(date) : Automation : " Copying Consolidated pack to sbstpvmlx1314 server."
+		#if ! [ -d "$folderName4/CB" ]; then
+			#echo $(date) : Automation :" CB and IB  are  not there so copying Consolidated pack($folderName4/$packName) to sbstpvmlx1314 server."
+			#scp -r $folderName4/* suntec@sbstpvmlx1314:/home/suntec
+			#echo $(date) : Automation : Executing Executer.sh without CB Pack
+			#ssh suntec@sbstpvmlx1314 "/home/suntec/Executer.sh Y $packName > AutoLog/jenLog.txt"
+			##ssh suntec@sbstpvmlx1314 "/home/suntec/Executer.sh Y $packName"
+		#else
+			#folderName4=`ls -d --sort=time /var/lib/jenkins/jobs/ForCons/Release/* | head -n1`
+	                #packName=`ls $folderName4/CB`
+	                #packName=${packName%.*}
+	 		#echo $(date) : Automation :" CB and IB  are there so copying Consolidated pack($folderName4/CB/$packName) to sbstpvmlx1314 server."
+			#scp -r $folderName4/CB/* suntec@sbstpvmlx1314:/home/suntec
+			#echo $(date) : Automation : Executing Executer.sh with CB Pack	
+			#echo $(date) : Automation : "ssh suntec@sbstpvmlx1314 /home/suntec/Executer.sh Y $packName"		
+			#ssh suntec@sbstpvmlx1314 "/home/suntec/Executer.sh Y $packName > AutoLog/jenLog.txt"
+		#fi
+	
+		##Deplyment Activitied starts here Above:
+		
+		##if grep -i 'Deployed "XelerateApp.ear"' ../builds/$BUILD_NUMBER/log && 
+			##ssh suntec@sbstpvmlx1314 "grep -i 'TBMS-TPE Started' /home/suntec/pcout.txt" && 
+			##ssh suntec@sbstpvmlx1314 "grep -i 'Started PC' /home/suntec/pcout.txt"; then
+		#echo "Sleep Starts Here 3Minutes"	 
+		#sleep 3m	
+		#echo "Sleep Ends Here "
+		##if grep -i 'Deployed "XelerateApp.ear"' ../builds/$BUILD_NUMBER/log ||
+		##if  ssh suntec@sbstpvmlx1314 "grep -i 'Deployed "XelerateApp.ear"' /home/suntec/jboss-as-7.1.1.Final/standalone/log/server.log" &&
+		##if  ssh suntec@sbstpvmlx1314 "grep -i 'JBOSS EAR DEPLOYED' /home/suntec/logs/testlog.log" &&
+		##if  ssh suntec@sbstpvmlx1314 "grep -i 'Deployed "XelerateApp.ear"' /home/suntec/jboss-eap-6.4/standalone/log/server.log" &&
+		#if ssh suntec@sbstpvmlx1314 "grep -i 'Deployed \"XelerateApp.ear\"' /home/suntec/jboss-eap-6.4/standalone/log/server.log" && 
+			#ssh suntec@sbstpvmlx1314 "grep -i 'TPE' /home/suntec/startedservices.txt" && 
+			#ssh suntec@sbstpvmlx1314 "grep -i 'Started PC' /home/suntec/pcout.txt" &&
+			#ssh suntec@sbstpvmlx1314 "grep -i 'No Error' /home/suntec/logs/XELERATE2.3/error.txt"; then 
+			#echo "Deployment Successful"
+			#MailAdress="";
+			#IFS=',' read -a array <<< "$ConsReleaseMail"
+	    	#for element in "${array[@]}"
+			#do
+				#MailAdress="$MailAdress""$element@suntecgroup.com "	
+			#done
+			#echo mailing release note to $MailAdress	
+			#mailx -s " XELERATE_2.3$dpName : Deployment Completed successfully" $MailAdress <../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			#echo $(date) : Automation : Deployment Is Successfull So Executing Takesnap.sh 
+			#echo $(date) : Automation : "ssh suntec@sbstpvmlx1314 /home/suntec/Takesnap.sh"		
+			#ssh suntec@sbstpvmlx1314 "/home/suntec/Takesnap.sh" &
+			#echo "DEPLOYED Snap Taken Successfully"
+			#sleep 2m
+			#else
+			##mailx -s " $JOB_NAME : Deployment Completed with errors" $MailAdress <../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			#echo $(date) : Automation : Deployment Completed with errors so Trying to Find Deployment Errors 
+			#echo $(date) : Automation : "ssh suntec@sbstpvmlx1314 /home/suntec/DeploymentErrorMail.sh $dpName > AutoLog/Deploymail.txt"
+			#ssh suntec@sbstpvmlx1314 "/home/suntec/DeploymentErrorMail.sh $dpName >AutoLog/Deploymail.txt"
+			##echo $(date) : Automation : Deployment Is Failed So Executing Revertsnap.sh 
+			##echo $(date) : Automation : "ssh suntec@sbstpvmlx1314 /home/suntec/Revertsnap.sh"
+			##ssh suntec@sbstpvmlx1314 "/home/suntec/Revertsnap.sh" &
+			##echo "Snap is going to revert"
+			##sleep 4m
+			##echo "snap reverted succesfully"
+			##ssh suntec@sbstpvmlx1314 "/home/suntec/Revertsnap.sh > AutoLog/Reversnap.txt" 
+		#fi
+		
+		##'
+		#-------------------------------------------------------------------------------------------------
+	else
+		echo $(date) : Automation : " Since there are no new commits in the Platform/function/Product, consolidated pack creation stopped and the build exits."
+		exit 1
+	fi
+	
+	##############
+	
+#else
+	#echo " No PMS is Module test passed. So its going to exit"
+	#MailAdress="";
+	#IFS=',' read -a array <<< "$ReleaseMail"
+    #for element in "${array[@]}"
+	#do
+		#MailAdress="$MailAdress""$element@suntecgroup.com "
+	#done
+	#cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/BuildFailedMail.txt ../builds/$BUILD_NUMBER/mails/
+	#echo mailing release note to $MailAdress
+	#mailx -s " $JOB_NAME : Build Suspended" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildFailedMail.txt
+	#exit 1
+#fi
+
+echo $(date): Build is successfull.
+MailAdress="";
+IFS=',' read -a array <<< "$BuildFailMail"
+for element in "${array[@]}"
+do
+	MailAdress="$MailAdress""$element@suntecgroup.com "
+done
+
+echo mailing build succes to $MailAdress
+cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/BuildSuccessMail.txt ../builds/$BUILD_NUMBER/mails/
+#mailx -s " XELERATE_2.3$dpName : Build success" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildSuccessMail.txt
+#ssh jenkins1@sbstpvmlx833 "/home1/jenkins1/Consolidated/PL_SCRIPTS/scrpt.sh"
+mailx -s " XELERATE_2.3$dpName : Build success" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildSuccessMail.txt

@@ -1,0 +1,1393 @@
+set +x
+this_command=""
+previous_command=""
+EncryptCommon="NO"
+function mailAbnormalTerminate {
+	echo
+	echo Last command executed:
+	echo $previous_command
+	cd $WORKSPACE
+	tail -30 ../builds/$BUILD_NUMBER/log > temp/buildLogTail.txt 
+	echo $(date): Abnormal terminate.
+	
+	MailAdress="";
+	IFS=',' read -a array <<< "$BuildFailMail"
+    	for element in "${array[@]}"
+	do
+		MailAdress="$MailAdress""$element@suntecgroup.com "
+	done
+	echo mailing build Abnormal terminate to $MailAdress
+		
+	cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/BuildAbonrmalTerminateMail.txt ../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	sed -i '/@BuildLog@/r  temp/buildLogTail.txt' ../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	sed -i '/@BuildLog@/d' ../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	echo : "Failed"
+	#mailx -s "Build Terminated" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	mailx -s " $JOB_NAME : Build Terminated" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildAbonrmalTerminateMail.txt
+	exit 100
+}
+
+#set -e
+trap 'mailAbnormalTerminate' ERR
+trap 'previous_command=$this_command; this_command=$BASH_COMMAND' DEBUG
+
+
+cd $WORKSPACE
+if [ -d "temp" ];then
+    rm -r temp
+fi
+mkdir temp															
+
+						
+repoURLPlatform="ssh://repository@sbstpvmlx811.suntecsbs.com:22/home/repository/PLATFORM_6"
+repoBranch=PLATFORM_6.1
+baseLabel=RELEASE_FLOATING
+
+cd $WORKSPACE
+if [ -d "workspace_platform" ]; then			
+	echo $(date): Automation : "Checkout the platform from $baseLabel.."
+	rm -rf workspace_platform
+	mkdir workspace_platform
+	cd workspace_platform	
+	echo $(date): Automation : "Checkout the platform from $baseLabel.."		
+	/usr/bin/git clone $repoURLPlatform .
+	/usr/bin/git checkout -f $repoBranch
+else
+	mkdir workspace_platform
+	cd workspace_platform	
+	echo $(date): Automation : "Checkout the platform from $baseLabel.."		
+	/usr/bin/git clone $repoURLPlatform .
+	/usr/bin/git checkout -f $repoBranch
+fi
+
+cd $WORKSPACE/workspace_platform	
+/usr/bin/git diff --name-only --diff-filter=MACR --name-only $baseLabel > ../temp/platformDelta.txt
+
+cd $WORKSPACE
+mkdir ../builds/$BUILD_NUMBER/mails
+startTime=$(date)
+repoUrl=$GIT_URL
+branchName=$GIT_BRANCH 
+headCommit=$GIT_COMMIT
+shopt -s extglob
+branchName="${branchName##*( )}"
+shopt -u extglob
+
+baseLabel=RELEASE_FLOATING
+basePackFolder="$JOB_NAME"_Base
+basePackName="$JOB_NAME"_Base
+baseSetupfile="XLRT_Main_Setup.txt"
+
+deltaLabel="$JOB_NAME"_DELTA
+deltaPackFolder="$JOB_NAME"_Delta
+deltaPackName="$JOB_NAME"_Delta
+deltaSetupfile="XLRT_Main_Setup.txt"
+
+
+JenkinsProject=FUNCTION_1.2
+BranchNameC="origin/FUNCTION_1.2"
+AppServer=Jboss
+EARType=TBMS_F
+ServerName=sbstpvmlx2010 
+releaseServer=sbstpvmlx833  
+OraVersion=11g
+verifyScript=N
+pmsDB=PRODPMS
+TestTools=None
+BuildFailMail=krishnaprasadp,release_helpdesk
+ReleaseMail=krishnaprasadp,release_helpdesk
+ConsReleaseMail=krishnaprasadp,release_helpdesk
+DBObjectPath="DB-INSTALLATION/DBObjects"
+
+
+
+cd $WORKSPACE
+upperAppServer=`echo "$AppServer" | tr '[:lower:]' '[:upper:]'`
+
+if [ -d ../builds/lastSuccessfulBuild ];then
+  	deltaCommitIDRef=`cat ../builds/lastSuccessfulBuild/headCommit| (head -n1)`
+  	echo $deltaCommitIDRef  	  		
+  	if ((xxx=`/usr/bin/git rev-list -1 $deltaLabel`));then
+  	echo " toVerifyTagging"
+  	  deltaCommitID=$(/usr/bin/git rev-list -1 $deltaLabel)  	  
+  	  if  [ "$deltaCommitID" != "$deltaCommitIDRef" ]; then
+  	     echo "Delta commit in DB not matching with commit id of lastSuccessfulBuild  "
+  	     mailAbnormalTerminate
+  	  fi
+  	else
+  		deltaCommitID=$deltaCommitIDRef  		
+  	fi 	
+else
+	set -x
+	/usr/bin/git tag -f "$JOB_NAME"_DELTA  $baseLabel
+	deltaCommitID=$(/usr/bin/git rev-list -1 $deltaLabel)	
+	echo $(date): Automation: "Successfully tagged. "	
+	set +x
+fi
+
+cd $WORKSPACE
+baseCommitID=$(/usr/bin/git rev-list -1 $baseLabel)
+
+cd $WORKSPACE
+if [ "$branchName" != "$BranchNameC" ]; then
+  echo "Current repository branch name $branchName not matching with configure Branch $BranchNameC"
+   mailAbnormalTerminate
+fi
+
+if [ "$OraVersion" == "11g" ]; then
+   echo
+elif [ "$OraVersion" == "10g" ]; then
+   echo
+else
+   echo Oracle version $OraVersion specified for the project is wrong.
+   mailAbnormalTerminate
+fi
+
+if [ "$pmsDB" == "PRODPMS" ]; then
+	pmsConfig="PRODPMSConfig.properties"
+elif [ "$pmsDB" == "CSPMS" ]; then
+	pmsConfig="CSPMSConfig.properties"
+else
+   echo "PMS DB "$pmsDB is not valid.
+   mailAbnormalTerminate
+fi
+
+if [ "$verifyScript" == "Y" ]; then
+	echo
+elif [ "$verifyScript" == "N" ]; then
+	echo
+else
+   echo verifyScript must be Y or N
+   mailAbnormalTerminate
+fi
+
+if [ "$EARType" == "TBMS_F" ]; then
+	echo
+elif [ "$EARType" == "TBMS_T" ]; then
+	echo
+else
+   echo EAR must be TBMS_F orTBMS_T
+   mailAbnormalTerminate
+fi
+
+IFS=',' read -a array <<< "$TestTools"
+for element in "${array[@]}"
+do
+	if [ "$element" == "Junit" ]; then
+	  echo
+	elif [ "$element" == "None" ]; then
+	  echo
+	else
+	   echo "Unknown test tool specified $element"
+	   mailAbnormalTerminate
+	fi
+done
+
+
+
+echo
+echo
+echo StartTime			$startTime
+echo Job name			$JOB_NAME
+echo Repository         $repoUrl
+echo Branch name		$branchName
+echo Build commit ID	$headCommit
+echo Base commit ID		$baseCommitID
+echo delta commit id    $deltaCommitID
+echo Appserver          $AppServer
+echo EAR                $EARType
+echo Deployment Server  $ServerName
+echo Oracle Version     $OraVersion
+echo
+
+echo
+
+echo $(date): Automation : Generating pms list from commits of platform repository.
+cd $WORKSPACE
+
+if !(ssh jenkins1@$releaseServer "[ -d $JOB_NAME ]"); then
+   ssh jenkins1@$releaseServer mkdir -p $JOB_NAME/Draft/PMS_TESTING_PACK
+   ssh jenkins1@$releaseServer mkdir -p $JOB_NAME/Draft/ST_PACK
+   
+   echo base setup created
+   exit 0
+fi
+
+pmsList=""
+	while read -r line
+    do
+	if ((p1=`expr index "$line" [`));then
+	  if ((p2=`expr index "$line" ]`));then
+	    length=`expr $p2 - $p1`
+	    length=`expr $length - 5`
+	    p1=`expr $p1 + 4`
+
+	    PmsNo=${line:$p1:$length}	   
+	    IFS=', ' read -a array <<< "$PmsNo"
+	    for element in "${array[@]}"
+		do
+		    pmsList="$pmsList""$element",
+		done
+	  fi
+	fi
+    done  < <( /usr/bin/git rev-list --pretty=format:%s $baseCommitID..$headCommit)   
+    
+	pmsList=\"$pmsList\"
+	echo " PMSList $pmsList"
+    
+    cd $WORKSPACE
+    
+    echo $(date): Automation : Identifying PMS in status 'Module test passed'
+    java -Xms50M -Xmx200M -jar $HOME/pmsTest/VerifyPMS_New.jar $JENKINS_HOME/pmsTest/$pmsConfig $pmsList >temp/ModuleTestPassed.org
+    cat temp/ModuleTestPassed.org|sort|uniq >temp/ModuleTestPassedPMS.txt
+    chmod 777 -R temp
+    sed -i 's#null#NA#g' temp/ModuleTestPassedPMS.txt	
+    #cat temp/ModuleTestPassed.org|sort|uniq >$packFolder/ModuleTestPassed.txt
+	
+cd $WORKSPACE
+if grep -i  "Started by timer" ../builds/$BUILD_NUMBER/log; then
+	if grep -i --fixed-strings "Module test passed." "./temp/ModuleTestPassedPMS.txt"; then
+		echo " There are MTP status PMS's available. So the build continues"
+		echo " Function Y" >> $JENKINS_HOME/Verification.txt
+	else
+		if (aaa=`/usr/bin/git rev-list -n 1 "$JOB_NAME"_Last_Build`); then		
+			lastBuildCommitID=$(/usr/bin/git rev-list -n 1 "$JOB_NAME"_Last_Build)
+			baseCommit=$(/usr/bin/git rev-list -n 1 "$baseLabel")
+			echo "commit id is set to '$lastBuildCommitID'"		
+			echo "commit id is set to '$baseCommit'"															
+		else 		
+			lastBuildCommitID=$(/usr/bin/git rev-list -n 1 $baseLabel)
+			/usr/bin/git tag -f "$JOB_NAME"_Last_Build $lastBuildCommitID
+		fi			
+		cd $WORKSPACE
+		if [[ "$baseCommit" != "$headCommit" ]]; then	
+			echo " There is new commits has been made after the "$lastBuildCommitID" commit. So build continues"
+			echo " Function Y" >> $JENKINS_HOME/Verification.txt
+		else
+			echo " Build started automatically and new commits are not available after the "$baseCommit" commit. So build stopped"
+			#exit 1
+		fi
+	fi
+else
+	echo " Function Y" >> $JENKINS_HOME/Verification.txt
+	echo " Build started by user. So the build continues"
+fi
+
+cd $WORKSPACE
+
+
+if [ -f "startMark" ];then
+	rm startMark
+fi
+echo $(date) >startMark 
+
+export PATH=$PATH:/etc/alternatives
+
+
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanup.sh
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/deploy.sh
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/setupdb.sql
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanDB.sql
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/wrapsql.sh
+sed -i 's/\r//' $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/pmsStatusCheck.sh
+
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanup.sh
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/deploy.sh
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/setupdb.sql
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/cleanDB.sql
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/wrapsql.sh
+chmod 755 $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/pmsStatusCheck.sh
+
+
+export MAVEN_HOME=/var/lib/jenkins/maven/mavenFrm1314/apache-maven-3.0
+#export JAVA_HOME=/var/lib/jenkins/java/jdk1.6.0_45
+#export PATH=/usr/kerberos/bin:/usr/bin:/bin:/usr/bin:/var/lib/jenkins/maven/mavenFrm1314/apache-maven-3.0/bin:/var/lib/jenkins/java/jdk1.6.0_45/bin
+export JAVA_HOME=/var/lib/jenkins/java/jdk1.7.0_45
+export PATH=/usr/kerberos/bin:/usr/bin:/bin:/usr/bin:/var/lib/jenkins/maven/mavenFrm1314/apache-maven-3.0/bin:/var/lib/jenkins/java/jdk1.7.0_45/bin
+
+#rm -rf /var/lib/jenkins/.m2/*
+
+BuildErrors="No"
+
+cd $WORKSPACE
+/usr/bin/git diff --diff-filter=MACR --name-only $baseCommitID $headCommit > temp/delta.txt
+
+#if grep -i "^FUNCTIONAL-MODULES" temp/delta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities" temp/delta.txt || grep -i "UI_Services" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareBaseDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareProcessDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareWrapperDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCarePlatformValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCareExtendedValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/ORM/Orm-Api" temp/platformDelta.txt || grep -i "^ProcessingComponents/TPE" temp/platformDelta.txt || grep -i "^ProcessingComponents/ORM/Orm-Impl" temp/platformDelta.txt ; then
+	echo " Building Functional modules."
+	if !($MAVEN_HOME/bin/mvn clean -B -DskipTests -f FUNCTIONAL-MODULES/pom.xml --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml install);then
+	   BuildErrors="No"
+	fi
+	if !($MAVEN_HOME/bin/mvn clean -B -DskipTests -f FUNCTIONAL-MODULES/pom.xml --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml  install );then
+  		BuildErrors="Build Functional modules failed. "
+	fi
+#fi
+
+
+if grep -i "^UI_Services" temp/delta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities" temp/delta.txt || grep -i "UI_Services" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareBaseDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareProcessDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareWrapperDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCarePlatformValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCareExtendedValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/ORM/Orm-Api" temp/platformDelta.txt; then
+	cd $WORKSPACE
+	cp -rf ./UI_Services/function ./workspace_platform/UI_Services
+	chmod -R 777 $WORKSPACE/workspace_platform/UI_Services
+
+	export JAVA_HOME=/var/lib/jenkins/java/jdk1.7.0_45
+	export PATH=/usr/kerberos/bin:/usr/bin:/bin:/usr/bin:/var/lib/jenkins/maven/mavenFrm1314/apache-maven-3.0/bin:/var/lib/jenkins/java/jdk1.7.0_45/bin
+
+	IFS=',' read -a array <<< "$AppServer"
+	for element in "${array[@]}"
+	do
+		echo $(date): Automation : Building UserInterface
+		cd $WORKSPACE
+			if [ "$element" == "Jboss" ] ; then
+				cd $WORKSPACE/workspace_platform/UI_Services
+				echo $(date) : Automation : 	
+				if !($MAVEN_HOME/bin/mvn clean install -D build=P,JB  --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml);then
+					BuildErrors="build UserInterface failed. "
+				fi
+				if !($MAVEN_HOME/bin/mvn clean install -D build=F,JB  --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml);then
+					BuildErrors="build UserInterface failed. "
+				fi
+			fi
+	done
+	
+	cd $WORKSPACE/workspace_platform/UI_Services
+	echo UI-Services PC building
+	if !($MAVEN_HOME/bin/mvn clean install -D build=P,PC  --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml);then
+		BuildErrors="build UserInterface PC failed. "
+	fi 
+	if !($MAVEN_HOME/bin/mvn clean install -D build=F,PC  --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml);then
+		BuildErrors="build UserInterface PC failed. "
+	fi 
+else
+	echo $(date): Automation : "Ear Build skipped ."
+fi
+
+cd $WORKSPACE
+if grep -i "^STANDALONE-SERVICES" temp/delta.txt; then
+	chmod -R 777 STANDALONE-SERVICES
+	echo " Building STANDALONE-SERVICES ."
+	if !($MAVEN_HOME/bin/mvn clean -B -DskipTests -f STANDALONE-SERVICES/pom.xml --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml  install );then
+  		BuildErrors="Build STANDALONE-SERVICES failed. "
+	fi
+fi
+
+cd $WORKSPACE
+#if grep -i "^STANDALONE-SERVICES/AsyncReportService" temp/delta.txt || grep -i "^UI_Services" temp/delta.txt; then
+if grep -i "^STANDALONE-SERVICES/AsyncReportService" temp/delta.txt; then
+    echo " Building STANDALONE-AsyncReportService ."
+	if !($MAVEN_HOME/bin/mvn clean -B -DskipTests -f STANDALONE-SERVICES/AsyncReportService/pom.xml --settings $WORKSPACE/workspace_platform/BuildSetup/PC/settings.xml  install );then
+  		BuildErrors="Build STANDALONE-AsyncReportService failed. "
+	fi
+fi
+
+cd $WORKSPACE
+/usr/bin/git tag -f "$JOB_NAME"_Last_Build $headCommit
+
+scriptBase="none"
+setupfile="none"
+for baseNo in 1 2
+do
+    #This is for delta based on last successful build
+    if [ $baseNo -eq 1 ]; then
+    	scriptBase=$deltaLabel
+    	scriptCommitID=$deltaCommitID    
+    	packFolder="$WORKSPACE"/"$deltaPackFolder"    	
+    	setupfile=$packFolder/$DBObjectPath/Main/Schema/$deltaSetupfile  
+    	packName=$deltaPackName     	
+        scriptMessage="modified after last successful build."
+    fi
+    
+    #This is for delta based on last base created manually
+    if [ $baseNo -eq 2 ]; then
+    	scriptBase=$baseLabel
+    	scriptCommitID=$baseCommitID
+    	packFolder="$WORKSPACE"/"$basePackFolder"
+    	setupfile=$packFolder/$DBObjectPath/Main/Schema/$baseSetupfile	
+    	packName=$basePackName        	
+    	scriptMessage="modified after current build base marked in repository."
+    fi    
+    
+    
+	cd $WORKSPACE
+	echo ""
+	if  [ "$BuildErrors" == "No" ];then
+		echo $(date): Automation : Packing Application $packName
+	else
+		echo $(date): Automation : $BuildErrors.
+		echo $(date): Automation : Packing DB scripts and packages for verification [ $packName ]		
+	fi
+	if [ -d "wrapsql" ];then
+	    rm -r wrapsql
+	fi
+	mkdir wrapsql
+	
+	if [ -d $packFolder ];then
+		rm -rf $packFolder
+	fi	
+
+	cd $WORKSPACE
+	
+	/usr/bin/git diff --diff-filter=MACR --name-only $scriptBase $headCommit > temp/files.txt
+	
+	echo $(date): Automation : Preparing pl/sql packages for wrapping
+	
+	while read -r line
+	do
+		while read -r line1
+		do		
+			if grep -i "$line1" temp/files.txt; then
+			    
+				#mkdir -p wrapsql/$line/DBObjects-ORCL/Plbs/$OraVersion
+				mkdir -p wrapsql/$line/DBObjects-ORCL/Packages
+		 	  	line0="${line1/FUNCTIONAL-MODULES\/$line\//wrapsql/$line/}"
+		 	  	#line0="${line0/\/Packages\///Plbs/$OraVersion/}"
+		 	  	echo " $line1 to $line0"
+			    cp -rf $line1 $line0
+			fi
+		done < <(find FUNCTIONAL-MODULES/$line/DBObjects-ORCL/Packages -maxdepth 1 -iname '*.sql' -print)
+	done < <(ls -1 ./FUNCTIONAL-MODULES)
+	
+	while read -r line
+	do
+		while read -r line1
+		do		
+			if grep -i "$line1" temp/files.txt; then
+				mkdir -p wrapsql/$line/DBObjects-PGS/Plbs/$OraVersion
+		 	  	line0="${line1/FUNCTIONAL-MODULES\/$line\//wrapsql/$line/}"
+		 	  	line0="${line0/\/Packages\///Plbs/$OraVersion/}"
+		 	  	echo " $line1 to $line0"
+			    cp -rf $line1 $line0
+			fi
+		done < <(find FUNCTIONAL-MODULES/$line/DBObjects-PGS/Packages -maxdepth 1 -iname '*.sql' -print)
+	done < <(ls -1 ./FUNCTIONAL-MODULES)
+	
+	if (ssh jenkins@$ServerName "[ -d $JOB_NAME/wrapsql ]"); then
+	  ssh jenkins@$ServerName rm -r $JOB_NAME/wrapsql
+	fi
+
+	scp -r wrapsql jenkins@$ServerName:$JOB_NAME/
+	scp  $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/wrapsql.sh jenkins@$ServerName:$JOB_NAME/wrapsql/
+	ssh jenkins@$ServerName sh $JOB_NAME/wrapsql/wrapsql.sh $JOB_NAME	
+
+	echo $(date): Automation : Copying plbs to pack
+	if (ssh jenkins@$ServerName "[ -d $JOB_NAME/wrapsql ]"); then	
+		if ! [ -d "$packFolder"/DB-INSTALLATION/Function/FUNCTIONAL-MODULES ]; then
+			mkdir -p "$packFolder"/DB-INSTALLATION/Function/FUNCTIONAL-MODULES
+		fi
+		scp -p -r jenkins@$ServerName:/home/jenkins/$JOB_NAME/wrapsql/*  "$packFolder"/DB-INSTALLATION/Function/FUNCTIONAL-MODULES
+	fi	
+	
+	if [ -f "$packFolder"/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/wrapsql.sh ]; then
+		rm -rf "$packFolder"/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/wrapsql.sh
+	fi
+	
+	while read -r line0
+	do
+		if grep -i "FUNCTIONAL-MODULES/$line0/DBObjects-ORCL/Schema/Alter" temp/files.txt; then
+			while read -r line
+			do
+				if grep -i "$line" temp/files.txt; then
+					target="$packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/$line0/DBObjects-ORCL/Schema/Alter"
+					if ! [ -d "$target" ]; then
+						mkdir -p "$target"
+					fi
+					echo " copying DBObjects-ORCL Alter files from $line to $target"
+					cp -rf $line $target
+				fi
+			done < <(find FUNCTIONAL-MODULES/$line0/DBObjects-ORCL/Schema/Alter -type f -print)
+		fi
+	done < <(ls -1 ./FUNCTIONAL-MODULES)
+	
+	while read -r line0
+	do
+		if grep -i "FUNCTIONAL-MODULES/$line0/DBObjects-ORCL/Schema/Data" temp/files.txt; then
+			while read -r line
+			do
+				if grep -i "$line" temp/files.txt; then
+					target="$packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/$line0/DBObjects-ORCL/Schema/Data"
+					if ! [ -d "$target" ]; then
+						mkdir -p "$target"
+					fi
+					echo " copying DBObjects-ORCL Data files from $line to $target"
+					cp -rf $line $target
+				fi
+			done < <(find FUNCTIONAL-MODULES/$line0/DBObjects-ORCL/Schema/Data -type f -print)
+		fi
+	done < <(ls -1 ./FUNCTIONAL-MODULES)
+	
+	while read -r line0
+	do
+		if grep -i "FUNCTIONAL-MODULES/$line0/DBObjects-PGS/Schema/Alter" temp/files.txt; then
+			while read -r line
+			do
+				if grep -i "$line" temp/files.txt; then
+					target="$packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/$line0/DBObjects-PGS/Schema/Alter"
+					if ! [ -d "$target" ]; then
+						mkdir -p "$target"
+					fi
+					echo " copying DBObjects-PGS Alter files from $line to $target"
+					cp -rf $line $target
+				fi
+			done < <(find FUNCTIONAL-MODULES/$line0/DBObjects-PGS/Schema/Alter -type f -print)
+		fi
+	done < <(ls -1 ./FUNCTIONAL-MODULES)
+	
+	while read -r line0
+	do
+		if grep -i "FUNCTIONAL-MODULES/$line0/DBObjects-PGS/Schema/Data" temp/files.txt; then
+			while read -r line
+			do
+				if grep -i "$line" temp/files.txt; then
+					target="$packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/$line0/DBObjects-PGS/Schema/Data"
+					if ! [ -d "$target" ]; then
+						mkdir -p "$target"
+					fi
+					echo " copying DBObjects-PGS Data files from $line to $target"
+					cp -rf $line $target
+				fi
+			done < <(find FUNCTIONAL-MODULES/$line0/DBObjects-PGS/Schema/Data -type f -print)
+		fi
+	done < <(ls -1 ./FUNCTIONAL-MODULES)	
+	
+	if grep -i "FUNCTIONAL-MODULES/Services/ServiceProfiles" temp/files.txt; then
+		while read -r line
+		do
+			if grep -i "$line" temp/files.txt; then
+				target="$packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/Services/ServiceProfiles"
+				if ! [ -d "$target" ]; then
+					mkdir -p "$target"
+				fi
+				cp -rf "$line" "$target"
+				echo "$line copied to $target"
+			fi
+		done < <(find FUNCTIONAL-MODULES/Services/ServiceProfiles -type f -print)
+	fi
+	
+	if grep -i "/Setup/" temp/files.txt > temp/Setup.txt; then
+		setup="$packFolder/DB-INSTALLATION/Function"
+		sed -i "s/.*/cp --parents '&' folder/" temp/Setup.txt
+		sed -i "s@folder@$setup@" temp/Setup.txt
+		chmod 777 temp/Setup.txt
+		./temp/Setup.txt
+		#cp -rf $packFolder/FUNCTIONAL-MODULES/* $packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES
+		#rm -rf $packFolder/FUNCTIONAL-MODULES
+	fi
+	
+	if `grep -i "FUNCTIONAL-MODULES/UserInterface" temp/files.txt > temp/userFiles.txt`; then
+		if ! [ -d "$packFolder/DB-INSTALLATION/Function" ]; then
+			mkdir -p $packFolder/DB-INSTALLATION/Function
+		fi	
+		sed -i "s/.*/cp --parents '&' folder\/DB-INSTALLATION\/Function/" temp/userFiles.txt
+		sed -i "s@folder@$packFolder@" temp/userFiles.txt
+		chmod 777 temp/userFiles.txt
+		./temp/userFiles.txt
+		#cp -rf $packFolder/DB-INSTALLATION/* $packFolder/DB-INSTALLATION/Function
+		#rm -rf $packFolder/DB-INSTALLATION
+	fi
+	
+	##Copy Global Files To pack Everytime
+	
+	if [ -d "$WORKSPACE"/FUNCTIONAL-MODULES/COMMON/DBObjects-ORCL/Global ]; then
+		if ! [ -d "$packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/COMMON/DBObjects-ORCL" ]; then
+			mkdir -p $packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/COMMON/DBObjects-ORCL
+		fi		
+		cp -rf "$WORKSPACE"/FUNCTIONAL-MODULES/COMMON/DBObjects-ORCL/Global "$packFolder"/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/COMMON/DBObjects-ORCL
+	fi
+	
+	
+	
+	echo " Trigger file copying"
+	##Copying Data Refresf Trigger To Pack Below
+	
+	triggerPath="$WORKSPACE/workspace_platform/DBObjects-ORCL/Tpe/Packages"
+	target="$packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES/COMMON/DBObjects-ORCL/SQL"
+	
+	if ! [ -d "$target" ]; then
+		mkdir -p "$target"
+	fi
+	echo " copying GENERATE_DATA_REFRESH_TRIGGER from $triggerPath to $target"
+	cp -rf $triggerPath/GENERATE_DATA_REFRESH_TRIGGER.sql $target
+	
+	
+	##Copying Data Refresf Trigger To Pack Above
+	
+	
+	
+	if  [ "$BuildErrors" == "No" ];then
+		echo "$(date): Automation : Copying Deployable services to pack"
+		pcRootFolder="$packFolder"/SERVICES/Installer
+		serviceTarget="$packFolder"/SERVICES/DeployableServices				
+		
+		#if grep -i "FUNCTIONAL-MODULES" temp/delta.txt; then
+		if grep -i "FUNCTIONAL-MODULES" temp/delta.txt || grep -i "^ProcessingComponents/TPE" temp/platformDelta.txt || grep -i "^ProcessingComponents/ORM/Orm-Impl" temp/platformDelta.txt || grep -i "^ProcessingComponents/ServiceUtilities" temp/platformDelta.txt; then
+			source1="$WORKSPACE/FUNCTIONAL-MODULES/RELEASE/deploy/tbms-tpe.sar"
+			source2="$WORKSPACE/FUNCTIONAL-MODULES/RELEASE/deploy/plugins"
+			target1="$serviceTarget/Tpe"
+			target2="$pcRootFolder"
+			if ! [ -d "$target1" ]; then
+				mkdir -p $target1
+			fi
+			if ! [ -d "$target2" ]; then
+				mkdir -p $target2
+			fi
+			echo $source1 to $target1
+			echo $source2 to $target2
+			cp -rf --preserve=timestamps $source1 $target1
+			cp -rf --preserve=timestamps $source2 $target2
+		fi
+		
+		
+		if grep -i "^STANDALONE-SERVICES/BillExtract/billextract" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/BillExtract/billextract/deploy/*
+			target=$serviceTarget/Billextract
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi
+		
+		if grep -i "^STANDALONE-SERVICES/SimulationUtilities/SimulationServicesDO" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/SimulationUtilities/SimulationServicesDO/deploy/simulation-do.jar
+			target=$pcRootFolder/plugins
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp --preserve=timestamps $source $target	
+		fi
+		
+		if grep -i "^STANDALONE-SERVICES/SimulationWebServices/WebServiceModule" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/SimulationWebServices/WebServiceModule/deploy/simulation-service.sar
+			target=$serviceTarget/SimulationWebServices
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi
+				
+		if grep -i "^STANDALONE-SERVICES/BulkMaintIdentifyEntities" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/BulkMaintIdentifyEntities/deploy/*
+			target=$serviceTarget/BulkMaintIdentifyEntities
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi				
+		
+		## Added Two New Standalones 13/01/2017 below
+		
+		if grep -i "^STANDALONE-SERVICES/FileUploadProcessor" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/FileUploadProcessor/deploy/*
+			target=$serviceTarget/FileUploadProcessor
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi	
+		
+		if grep -i "^STANDALONE-SERVICES/FileUploadValidator" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/FileUploadValidator/deploy/*
+			target=$serviceTarget/FileUploadValidator
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi	
+	
+		if grep -i "^STANDALONE-SERVICES/InvoiceGeneratorPDFService" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/InvoiceGeneratorPDFService/deploy/*
+			target=$serviceTarget/InvoiceGeneratorPDFService
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi
+
+		## Added Two New Standalones 13/01/2017 above
+		## Added New Standalones 21/04/2017 below
+		
+		if grep -i "^STANDALONE-SERVICES/FeedLogger" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/FeedLogger/deploy/*
+			target=$serviceTarget/FeedLogger
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi	
+		
+		## Added New Standalones 21/04/2017 below
+		
+		## Added New Standalones XelerateExcelReport 22/03/2018 below
+		
+		if grep -i "^STANDALONE-SERVICES/XelerateExcelReport" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/XelerateExcelReport/deploy/*
+			target=$serviceTarget/XelerateExcelReport
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi	
+		
+		## Added New Standalones XelerateExcelReport 22/03/2018 below
+	
+	##Added InvoiceDetailsReport 07/04/17 below
+	
+	if grep -i "^STANDALONE-SERVICES/InvoiceDetailsReport" temp/delta.txt; then
+	source1=$WORKSPACE/STANDALONE-SERVICES/InvoiceDetailsReport/deploy/InvoiceDetailsReport.sar
+	target1=$serviceTarget/InvoiceDetailsReport
+	source2="$WORKSPACE/STANDALONE-SERVICES/InvoiceDetailsReport/deploy/plugins"
+	target2="$pcRootFolder"
+		if ! [ -d $target1 ];then
+			mkdir -p $target1
+ 		fi
+			
+	echo "     $source1 to $target1"
+	cp -rf --preserve=timestamps $source1 $target1
+			
+		if ! [ -d "$target2" ]; then
+			mkdir -p $target2
+		fi
+	echo "     $source2 to $target2"
+	cp -rf --preserve=timestamps $source2 $target2
+				
+    fi
+	
+	
+	
+## Added Two New Standalones 20/03/2017 below
+		
+		if grep -i "^STANDALONE-SERVICES/SimulationStatusChange" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/SimulationStatusChange/deploy/*
+			target=$serviceTarget/SimulationStatusChange
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi	
+		
+		if grep -i "^STANDALONE-SERVICES/SuspenseProcessing" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/SuspenseProcessing/deploy/*
+			target=$serviceTarget/SuspenseProcessing
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi	
+		
+		if grep -i "^STANDALONE-SERVICES/GeneralServices" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/GeneralServices/deploy/*
+			target=$serviceTarget/GeneralServices
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi
+		
+		if grep -i "^STANDALONE-SERVICES/PaymentFollowup" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/PaymentFollowup/deploy/*
+			target=$serviceTarget/PaymentFollowup
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi
+		
+		
+		if grep -i "^STANDALONE-SERVICES/AsyncReportService" temp/delta.txt || grep -i "^UI_Services" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/AsyncReportService/deploy/*
+			target=$serviceTarget/AsyncReportService
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi
+		
+		##Added new standalone 06/11/2017below
+			
+		if grep -i "^STANDALONE-SERVICES/GroupOfferManagement" temp/delta.txt; then
+			source=$WORKSPACE/STANDALONE-SERVICES/GroupOfferManagement/deploy/*
+			target=$serviceTarget/GroupOfferManagement
+			if ! [ -d $target ];then
+				mkdir -p $target
+			fi
+			echo "     $source to $target"
+			cp -rf --preserve=timestamps $source $target	
+		fi
+		
+		##Added new standalone 06/11/2017above
+		
+		
+		## Added Two New Standalones 20/03/2017 above
+		
+		cd $WORKSPACE
+		echo "$(date): Automation : Copying EAR to pack "
+		IFS=',' read -a array <<< "$AppServer"
+		for element in "${array[@]}"
+		do			
+			if [[ "$element" != Weblogic ]]; then
+			if grep -i "^UI_Services" temp/delta.txt || grep -i "^FUNCTIONAL-MODULES/COMMON-PLATFORM/ProcessingComponents/CustomerCareUtilities" temp/delta.txt || grep -i "UI_Services" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareBaseDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareProcessDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareWrapperDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCarePlatformValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCareExtendedValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/ORM/Orm-Api" temp/platformDelta.txt; then		
+				source1=workspace_platform/UI_Services/deploy/function/$element/*
+				source2=workspace_platform/UI_Services/deploy/WorkFlowEngine/function/$element/*
+				target1=$packFolder/USER-INTERFACE/$element/EAR
+				target2=$packFolder/USER-INTERFACE/$element/WorkFlowEngine
+				if ! [ -d "$target1" ]; then
+					mkdir -p $target1
+				fi
+				if ! [ -d "$target2" ]; then
+					mkdir -p $target2
+				fi
+				echo "     $source1 to $target1"
+				#echo "     $source2 to $target2"
+				echo "Workflow engine from funcion not copying to Pack "
+				cp --preserve=timestamps -r $source1 $target1
+				cp --preserve=timestamps -r $source2 $target2
+			fi
+			fi
+		done	
+		
+		
+		#delete
+				#
+			    #
+			    #
+			    #
+		#this
+		
+if grep -i "^UI_Services" temp/delta.txt || grep -i "^FUNCTIONAL-MODULES/COMMON-PLATFORM/ProcessingComponents/CustomerCareUtilities" temp/delta.txt || grep -i "UI_Services" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareBaseDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareProcessDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareDO/CustomerCareWrapperDO" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCarePlatformValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/CustomerCareUtilities/CustomerCareBasicValidator/CustomerCareExtendedValidator" temp/platformDelta.txt || grep -i "^ProcessingComponents/ORM/Orm-Api" temp/platformDelta.txt; then
+			source1=workspace_platform/UI_Services/deploy/function/PC/*
+			source2=workspace_platform/UI_Services/deploy/function/TPE/*
+			target1=$serviceTarget/XelerateService
+			target2=$pcRootFolder
+			if ! [ -d "$target1" ]; then
+					mkdir -p $target1
+			fi
+			if ! [ -d "$target2" ]; then
+					mkdir -p $target2
+			fi
+			echo "     $source1 $source2 to $target1 $target2"
+			cp --preserve=timestamps -rf $source1 $target1
+			cp --preserve=timestamps -rf $source2 $target2
+		fi
+	fi
+	
+
+
+	if grep -i "/Setup/" temp/files.txt > temp/Setup.txt; then
+		setup="$packFolder/DB-INSTALLATION/Function"
+		sed -i "s/.*/cp --parents '&' folder/" temp/Setup.txt
+		sed -i "s@folder@$setup@" temp/Setup.txt
+		chmod 777 temp/Setup.txt
+		./temp/Setup.txt
+		#cp -rf $packFolder/FUNCTIONAL-MODULES/* $packFolder/DB-INSTALLATION/Function/FUNCTIONAL-MODULES
+		#rm -rf $packFolder/FUNCTIONAL-MODULES
+	fi
+	
+	if `grep -i "FUNCTIONAL-MODULES/UserInterface" temp/files.txt > temp/userFiles.txt`; then
+		if ! [ -d "$packFolder/DB-INSTALLATION/Function" ]; then
+			mkdir -p $packFolder/DB-INSTALLATION/Function
+		fi	
+		sed -i "s/.*/cp --parents '&' folder\/DB-INSTALLATION\/Function/" temp/userFiles.txt
+		sed -i "s@folder@$packFolder@" temp/userFiles.txt
+		chmod 777 temp/userFiles.txt
+		./temp/userFiles.txt
+		#cp -rf $packFolder/DB-INSTALLATION/* $packFolder/DB-INSTALLATION/Function
+		#rm -rf $packFolder/DB-INSTALLATION
+	fi
+	
+	
+	cd $WORKSPACE
+	if [ -d $WORKSPACE/workspace_platform/ProcessingComponents ]; then
+		tar -cf ProcessingComponents.tar $WORKSPACE/workspace_platform/ProcessingComponents/
+    fi
+    
+    if [ -d workspace_platform/UI_Services ]; then
+		tar -cf UI_Services.tar workspace_platform/UI_Services/
+    fi  
+  
+    cd $WORKSPACE
+	echo $(date): Automation : Verifying duplicate directories created due to case sensitivity of unix.
+	duplicateDir="False"
+	while read -r line
+	do
+	  echo $line
+	  duplicateDir="True"
+	done  < <(find  . -type d|sort| uniq -c -i -d)
+	
+	while read -r line
+	do
+	  echo $line
+	  duplicateDir="True"
+	done  < <(find  $packFolder -type d|sort| uniq -c -i -d)
+	
+	if [ $duplicateDir == "True" ];then
+		echo Directories listed above created in duplicate due to case sensitivity. Make required corrections.
+	    mailAbnormalTerminate
+	fi
+	
+	echo $(date): Automation : Checking for old files.
+	# verify pack for old files
+	elapsedSec=$( expr  $(date +%s) - $(date +%s -r startMark) )
+	#elaspedMin=$( expr $elapsedSec / 60 )
+	find $packFolder -cmin +30 -print
+
+   if grep -i "^PatchName" temp/ModuleTestPassed.org > temp/patchno.txt ; then
+		sed -i 's/PatchName//g' temp/patchno.txt
+		patchID=`cat temp/patchno.txt| (head -n1)`
+	else
+	   echo $(date): Automation :Patch name could not be resolved.
+	   exit 1
+	fi	
+	echo patch number $patchID
+	echo $(date): Automation : Creating Zip file.
+					
+	cd $WORKSPACE
+	chmod 777 $packFolder
+	cd $packFolder
+	if [ -d "$patchID" ]; then
+		rm -rf "$patchID"
+	fi
+	mkdir -p ./"$patchID"
+	while read -r line
+	do		
+		if [ "$line" != "$patchID" ]; then			
+			echo " $line directory created inside $patchID."
+			mv "$line" "$patchID"/
+			echo "$line" moved to $patchID		
+		fi
+	done < <(ls -1 ./)
+	
+	zip -r "$patchID".zip *	
+	
+	echo $(date): Automation : End packing $packName
+		
+done
+#pack ends	
+	
+cd $WORKSPACE
+echo
+if [ "$verifyScript" == "Y" ]; then
+	echo $(date): Automation : Applying Base pack $basePackName in database for verification
+	ssh jenkins@$ServerName mkdir -p $JOB_NAME/install
+	scp  $JENKINS_HOME/jenkinscripts/ProjectBuildScripts/cleanup.sh jenkins@$ServerName:$JOB_NAME/install/
+	scp  $JENKINS_HOME/jenkinscripts/ProjectBuildScripts/deploy.sh jenkins@$ServerName:$JOB_NAME/install/
+	scp  $JENKINS_HOME/jenkinscripts/ProjectBuildScripts/setupdb.sql jenkins@$ServerName:$JOB_NAME/install/
+	scp  $JENKINS_HOME/jenkinscripts/ProjectBuildScripts/cleanDB.sql jenkins@$ServerName:$JOB_NAME/install/
+	
+	ssh jenkins@$ServerName $JOB_NAME/install/cleanup.sh $JOB_NAME $basePackName
+	scp $basePackName.tar jenkins@$ServerName:$JOB_NAME/install/
+	ssh jenkins@$ServerName tar -xf $JOB_NAME/install/$basePackName.tar -C $JOB_NAME/install
+	
+	#scp -r $JENKINS_HOME/PackStructure/Installer jenkins@$ServerName:$JOB_NAME/install/$basePackFolder
+	#scp  $JENKINS_HOME/jenkinscripts/ProjectBuildScripts/$JOB_NAME/DB_SETUP.INI  jenkins@$ServerName:$JOB_NAME/install/$basePackFolder/Installer/conf
+	#echo $(date): Automation : deployment starts.
+	#ssh jenkins@$ServerName sh $JOB_NAME/install/deploy.sh $JOB_NAME $headCommit $baseCommitID $basePackFolder $dropSchema N 
+	#scp jenkins@$ServerName:/home/jenkins/$JOB_NAME/install/$basePackFolder/Installer/logs/XELERATE_Installer.log ./temp
+fi
+echo $(date): Automation : Creating mails
+
+#REMOVE FOLLOWING LINE
+echo "REM EndApplyingScripts " > temp/XELERATE_Installer.log
+
+PLSQLErrors="No"
+startLog="NO"
+echo "" > ../builds/$BUILD_NUMBER/BuildErrors.txt
+echo "" >>$WORKSPACE/temp/allErrors.txt
+prev_line="XelerateBuildErrors ........";
+truncateAt=0
+while read -r line
+do
+  #line=${line:33}
+  #line="${line/DBObjects\/Plbs\/$OraVersion\//DBObjects-ORCL/}"
+  #line="${line/.plb/.sql}"
+ #?? if [[ "$line" == *Warning:* ]]; then
+ #??  continue
+ #?? fi
+  if [[ "$line" == *BeginApplyingScripts* ]]; then
+   startLog="YES"
+  fi
+  if [[ "$line" == *EndApplyingScripts* ]]; then
+   echo  "$line"
+   break
+  fi
+  if [[ "$line" == *DBObjects-ORCL/* ]]; then
+   prev_line="$line"
+   truncateAt=50;
+   continue
+  fi
+  if [ "$startLog" == "YES" ]; then
+    if [[ "$line" != *DBObjects-ORCL/* ]]; then
+       if [ ! -z  "$prev_line" ]; then
+         if [[ "$prev_line" == XelerateBuildErrors* ]]; then
+           echo "" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+         else
+         	PLSQLErrors="Alter,Data or PLSQL has errors."
+            source=$prev_line
+            echo "" >> ../builds/$BUILD_NUMBER/BuildErrors.txt 
+            if `/usr/bin/git log -n 1 --pretty=format:"Author:%an%n"  $source >> ../builds/$BUILD_NUMBER/BuildErrors.txt`;then
+               echo "File: $source" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+               echo "Type: Error"  >> ../builds/$BUILD_NUMBER/BuildErrors.txt 
+            else
+              
+               echo "Author:NoAuthor" >> ../builds/$BUILD_NUMBER/BuildErrors.txt 
+               #echo "MailId:NoAuthor" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+               echo "File:$source" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+               echo "Type:Error"  >> ../builds/$BUILD_NUMBER/BuildErrors.txt 
+            fi
+         fi
+       fi
+       if [ ! -z  "$line" ]; then
+          lineTrimed=`echo "${line}" | sed -e 's/^[ \t]*//'`
+          lenLine=${#line}
+          lenTrimed=${#lineTrimed}
+          pos=$(($lenLine - $lenTrimed))
+          
+          if [[ "$line" != *\ \ \ \** ]]; then
+          #if [ "$pos" -lt "$truncateAt" ];then
+          	truncateAt=$pos;
+          #fi
+          fi
+          lineTrimed=${line:$truncateAt}
+          if [[ "$line" == *BeginApplyingScripts* ]]; then 
+            echo "" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+          else
+          	echo "       $lineTrimed" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+          fi
+          #   echo "$line"     
+       fi
+       prev_line=""
+    fi
+  fi
+done  < temp/XELERATE_Installer.log
+
+
+echo "java compile errors" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+
+while read -r line
+do
+if  [[ "$line" == *\[javac\]* ]] || [[ "$line" == *\[ERROR\]* ]] ; then
+
+    if [[ "$line" == */var/lib/jenkins/jobs* ]]; then
+	    if grep -i --fixed-strings "$line" temp/allErrors.txt > temp/xxxx.txt;then
+			continue
+		fi
+		   
+    
+        echo "$line" >>temp/allErrors.txt
+	    line1=${line:8}    
+	    if [[ "$line" == *\[ERROR\]* ]]; then 
+			line1="${line1/] /]:}"	
+	    fi
+	    IFS=':' read -a array <<< "$line1"
+	    if [ ${#array[@]} -gt 2 ] ; then
+	    	source=${array[0]}
+	    	source=${source/$WORKSPACE\//}
+		    if `/usr/bin/git log -n 1 --pretty=format:"%nAuthor   :%an%n"  $source >> ../builds/$BUILD_NUMBER/BuildErrors.txt`;then
+		       echo File     :$source >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		       if [ "${array[2]}" == "warning" ] || [ "${array[2]}" == " warning" ] ; then
+		            warning="${array[3]}"
+		            len=${#warning}
+		            warning=${warning:1:$len - 4 }
+		       	    if grep -i --fixed-strings "$warning" $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/$JOB_NAME/ExcludeWarnings.txt > temp/xxxx.txt;then
+						continue
+					fi
+		       		echo Warning   :${array[3]} >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		       else
+		       		echo Error    :${array[2]} >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		       fi
+		       echo      Line/Col :${array[1]} >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+			#      echo " " >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		    else
+		       echo " " >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		            echo "Author  :NoAuthor" >> ../builds/$BUILD_NUMBER/BuildErrors.txt 
+		       #echo "MailId:NoAuthor" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		       echo File     :$source >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		       if [ "${array[2]}" == "warning" ] || [ "${array[2]}" == " warning" ] ; then
+		            warning="${array[3]}"
+		            len=${#warning}
+		            warning=${warning:1:$len - 4 }
+		       		if `grep -i --fixed-strings "$warning" $JENKINS_HOME/jenkinscripts/ProjectBuildScripts/$JOB_NAME/ExcludeWarnings.txt > temp/xxxx.txt` ;then
+						continue
+					fi
+		       		echo Warning   :${array[3]} >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		       else
+		       		echo Error    :${array[2]} >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		       fi
+		            echo Line/Col :${array[1]} >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+			#       echo " " >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+		    fi
+		    #if [ ${#array[@]} -gt 3 ]; then
+			#    for (( i=3 ; i < ${#array[@]} ; i++ ))
+			#	do
+			#    echo "       ${array[i]}" >> ../builds/$BUILD_NUMBER/BuildErrors.txt
+			#	done
+		    #fi
+	     fi
+    fi
+fi
+done  < ../builds/$BUILD_NUMBER/log
+
+outfile="NoAuthor"
+while IFS= read -r line
+do
+     if [[ "$line" == Author* ]]; then
+       IFS=':' read -a array <<< "$line"
+       outfile=${array[1]}
+       continue
+     fi
+     echo "$line" >> ../builds/$BUILD_NUMBER/mails/$outfile
+done  < ../builds/$BUILD_NUMBER/BuildErrors.txt
+
+echo $(date): Automation : Sending mails to developers.
+while read -r line
+do
+	if ! [ "$line" == "NoAuthor" ] && [ "$BuildErrors" != "No" ]; then
+		echo mail to $line
+     	#mailx -s " $JOB_NAME : Compilation errors (Modified by you)" -c "ashajp@suntecgroup.com,pet_leads@suntecgroup.com,release_helpdesk@suntecgroup.com" "$line@suntecgroup.com" <../builds/$BUILD_NUMBER/mails/$line
+     	mailx -s " $JOB_NAME : Compilation errors (Modified by you)" -c "krishnaprasadp@suntecgroup.com,amalg@suntecgroup.com" "$line@suntecgroup.com" <../builds/$BUILD_NUMBER/mails/$line
+	fi
+done  < <(ls -1 ../builds/$BUILD_NUMBER/mails)
+
+if [ "$BuildErrors" == "No" ]; then
+	if ! [ "$PLSQLErrors" == "No" ]; then
+		BuildErrors="$PLSQLErrors"
+	fi
+else
+  	if ! [ "$PLSQLErrors" == "No" ]; then 
+  	  echo "$BuildErrors $PLSQLErrors"
+		BuildErrors="$BuildErrors $PLSQLErrors"
+	fi
+fi
+
+
+cd $WORKSPACE
+if [ "$BuildErrors" == "No" ]; then
+	#if `grep -i --fixed-strings "Module test passed." "./temp/ModuleTestPassedPMS.txt" > temp/xxxx.txt` ;then	   
+		
+		cd $WORKSPACE
+		/usr/bin/git tag -f "$JOB_NAME"_DELTA $headCommit			
+		echo $headCommit >../builds/$BUILD_NUMBER/headCommit		
+		cd $WORKSPACE
+		
+		
+		dateString=`date +%Y-%m-%d`		
+		echo " pack folders created in target server"			
+		cd $WORKSPACE/$deltaPackFolder			
+		var2=$patchID"_"		
+		var1=`ssh jenkins1@$releaseServer ls -d $JOB_NAME/Draft/PMS_TESTING_PACK/$var2*|sort -r 2>&1 | (head -n1)`
+		#var3="${var1/$var2/}"			
+		#var4=${var3:1:3}
+		var4=${var1: -13:3}			
+		var5=`expr $var4 + 1`
+		printf -v var6 "%03d" $var5
+		dat=`date +"%m-%d-%y"`
+		var7=$var2"R"$var6"["$dat"]"
+		var8=$var2"R"$var6
+		ssh jenkins1@$releaseServer mkdir -p $JOB_NAME/Draft/PMS_TESTING_PACK/"$var7"
+		scp -p -r "$patchID".zip jenkins1@$releaseServer:$JOB_NAME/Draft/PMS_TESTING_PACK/"$var7"/"$var7".zip
+		
+		cd $WORKSPACE/$basePackFolder			
+		ssh jenkins1@$releaseServer mkdir -p $JOB_NAME/Draft/ST_PACK/$var7
+		scp -p -r "$patchID".zip jenkins1@$releaseServer:$JOB_NAME/Draft/ST_PACK/"$var7"/"$patchID".zip	
+		
+		cd $WORKSPACE
+		#cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/ReleaseMail.txt ../builds/$BUILD_NUMBER/mails/
+		#sed -i "/@listPms@/r ./temp/ModuleTestPassedPMS.txt" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		#sed -i '/@listPms@/d' ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		
+		######################
+		
+		sed -i "/PMS_TESTING_PACK/d" ./temp/ModuleTestPassedPMS.txt
+		sed -i "/ST_PACK/d" ./temp/ModuleTestPassedPMS.txt
+		cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/ReleaseMail.txt ../builds/$BUILD_NUMBER/mails/
+		sed -i "/@listPms@/r ./temp/ModuleTestPassedPMS.txt" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		sed -i '/@listPms@/d' ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt		
+		sed -i "s/Project/$JOB_NAME/" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		sed -i "s/PackName/ST_PACK/" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		sed -i "s/xactPath/$var7/" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		sed -i "/Status/d" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt		
+		#sed -i "/PMS_TESTING_PACK/d" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		#sed -i "/ST_PACK/d" ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		#sed -i "/So Please/i \All of the PMS's in this Patch plan is in MTP status." ../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		
+		
+		######################
+		
+		MailAdress="";
+		IFS=',' read -a array <<< "$ReleaseMail"
+	    for element in "${array[@]}"
+		do
+			MailAdress="$MailAdress""$element@suntecgroup.com "
+		done
+		echo mailing release note to $MailAdress
+		mailx -s " $JOB_NAME : Release for PMS test" $MailAdress <../builds/$BUILD_NUMBER/mails/ReleaseMail.txt
+		
+		#####
+		if [ -f "$JENKINS_HOME/Verification.txt" ]; then	
+		
+		for pack in 1 2
+		do
+			if [ "$pack" == 1 ]; then
+				pack=PMS_TESTING_PACK
+			fi
+			if [ "$pack" == 2 ]; then
+				pack=ST_PACK
+			fi
+			
+			if grep -i --fixed-strings Platform $JENKINS_HOME/Verification.txt; then
+				platformAuth=$(grep --fixed-strings Platform "$JENKINS_HOME/Verification.txt")
+				IFS=' ' read -a array <<< "$platformAuth"
+				plAuthentification=${array[1]}
+				if [ "$plAuthentification" == Y ]; then
+					folderName1=`ssh jenkins1@sbstpvmlx833 ls -d --sort=time /home1/jenkins1/PLATFORM_6.1_PL/Draft/$pack/* | head -n1`
+					fileName1=`ssh jenkins1@sbstpvmlx833 ls $folderName1`
+					echo $(date) : Automation : Copying $fileName1 from sbstpvmlx833 server to 824 for consolidation purpose.
+					rm -rf $JENKINS_HOME/jobs/ForCons/Platform/*
+					scp -r jenkins1@sbstpvmlx833:$folderName1/$fileName1 $JENKINS_HOME/jobs/ForCons/Platform
+					platformPackPath="$JENKINS_HOME/jobs/ForCons/Platform"
+				else
+					platformPackPath=
+				fi
+			fi
+		
+			if grep -i --fixed-strings Function $JENKINS_HOME/Verification.txt; then
+				functionAuth=$(grep --fixed-strings Function "$JENKINS_HOME/Verification.txt")
+				IFS=' ' read -a array <<< "$functionAuth"
+				fnAuthentification=${array[1]}
+				if [ "$fnAuthentification" == Y ]; then
+					folderName2=`ssh jenkins1@sbstpvmlx833 ls -d --sort=time /home1/jenkins1/$JOB_NAME/Draft/$pack/* | head -n1`
+					fileName2=`ssh jenkins1@sbstpvmlx833 ls $folderName2`
+					echo $(date) : Automation : Copying $fileName2 from sbstpvmlx833 server to 824 for consolidation purpose.
+					rm -rf $JENKINS_HOME/jobs/ForCons/Function/*
+					scp -r jenkins1@sbstpvmlx833:$folderName2/$fileName2 $JENKINS_HOME/jobs/ForCons/Function
+					functionPackPath="$JENKINS_HOME/jobs/ForCons/Function"
+				else
+					functionPackPath=
+				fi
+			fi
+			
+			productPackPath=F_null
+			
+			java -jar $JENKINS_HOME/pmsTest/GetDPNo.jar $JENKINS_HOME/pmsTest/$pmsConfig $pmsList > temp/dpLog.txt
+		
+			cat temp/dpLog.txt|sort|uniq > temp/dpName.txt
+			rm -rf temp/dpLog.txt
+			dpNos=$(cat temp/dpName.txt|wc -l)
+			
+			if [ "$dpNos" == 1 ]; then
+				dpName=$(cat temp/dpName.txt)
+				dpName=${dpName:7:5}
+			fi
+			
+			echo $(date): Automation : "Consolidation(Platform+Function)"
+			#java -jar $JENKINS_HOME/jobs/ForCons/XLRT_REL_CON_AUT.jar "$JENKINS_HOME/jobs/ForCons/Platform" "$JENKINS_HOME/jobs/ForCons/Function" "$JENKINS_HOME/jobs/ForCons/Product"
+			java -jar $JENKINS_HOME/jobs/ForCons/XLRT_REL_CON_AUT.jar "$platformPackPath" "$functionPackPath" "$productPackPath" "$dpName"
+			echo $(date) : Automation : Consolidation completed successfully.
+			
+			if !(ssh jenkins1@$releaseServer "[ -d "/home1/jenkins1/Consolidated/$JOB_NAME/$pack" ]"); then
+				ssh jenkins1@$releaseServer mkdir -p /home1/jenkins1/Consolidated/$JOB_NAME/$pack
+			fi
+			
+			folderName4=`ls -d --sort=time /var/lib/jenkins/jobs/ForCons/Release/* | head -n1`
+			scp -r $folderName4 jenkins1@sbstpvmlx833:/home1/jenkins1/Consolidated/$JOB_NAME/$pack
+			fold=${folderName4##*/}
+			fold="$JOB_NAME/$pack/$fold"
+			
+			packName=`ls $folderName4`
+			packName=${packName%.*}
+			
+			
+			cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/ConsMail.txt ../builds/$BUILD_NUMBER/mails/
+			sed -i "s@consPack@$fold@" ../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			sed -i "s@packName@$JOB_NAME@" ../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			
+			if grep -i "Module test passed." $JENKINS_HOME/jobs/PLATFORM_6.1_PL/workspace/temp/ModuleTestPassedPMS.txt >temp/consPMS.txt; then
+				sed -i "1 i Platform" temp/consPMS.txt
+				sed -i "2 i --------" temp/consPMS.txt
+				echo "" >>temp/consPMS.txt
+				echo "Function" >>temp/consPMS.txt
+				echo "--------" >>temp/consPMS.txt
+			else
+				echo "Platform" >>temp/consPMS.txt
+				echo "--------" >>temp/consPMS.txt
+				echo "No MTP Status PMS's in Platform Layer." >>temp/consPMS.txt
+				echo "" >>temp/consPMS.txt
+				echo "Function" >>temp/consPMS.txt
+				echo "--------" >>temp/consPMS.txt
+			fi
+			if grep -i "Module test passed." $JENKINS_HOME/jobs/$JOB_NAME/workspace/temp/ModuleTestPassedPMS.txt >>temp/consPMS.txt; then
+				echo "" >>temp/consPMS.txt				
+			else			
+				echo "No MTP Status PMS's in Function Layer." >>temp/consPMS.txt
+				echo "" >>temp/consPMS.txt				
+			fi			
+			
+			echo "" >>../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			echo "" >>../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			cat temp/consPMS.txt >>../builds/$BUILD_NUMBER/mails/ConsMail.txt			
+			
+			## PMS TESTING PACK MAIL DISABLED
+			
+			#if [ $pack==ST_PACK ]; then
+			if [ "$pack" != "PMS_TESTING_PACK" ]; then
+			MailAdress="";
+			IFS=',' read -a array <<< "$ConsReleaseMail"
+		    for element in "${array[@]}"
+			do
+				MailAdress="$MailAdress""$element@suntecgroup.com "	
+			done
+			echo mailing release note to $MailAdress	
+			#mailx -s " $JOB_NAME : Latest DP-"$dpName" pack for testing" $MailAdress <../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			mailx -s " $JOB_NAME : Latest Platform + Function pack for testing" $MailAdress <../builds/$BUILD_NUMBER/mails/ConsMail.txt
+			echo $(date): Automation : Promoting PMS in status 'Module test passed'
+			java -Xms50M -Xmx200M -jar $HOME/pmsTest/PromotePMS.jar $JENKINS_HOME/pmsTest/$pmsConfig $pmsList >temp/PromotePMS.txt
+			fi
+		done	
+		fi
+		
+	echo $(date): Build is successfull.
+	MailAdress="";
+	IFS=',' read -a array <<< "$BuildFailMail"
+    for element in "${array[@]}"
+	do
+		MailAdress="$MailAdress""$element@suntecgroup.com "
+	done
+	
+	echo mailing build succes to $MailAdress
+	cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/BuildSuccessMail.txt ../builds/$BUILD_NUMBER/mails/
+	mailx -s " $JOB_NAME : Build success" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildSuccessMail.txt
+else
+	echo $(date): Build errors exists.
+	cp $JENKINS_HOME/jenkinscripts/scripts/Xelerate_2x/BuildErrorMail.txt ../builds/$BUILD_NUMBER/mails/
+	sed -i "/@BuildErrors@/r  ../builds/$BUILD_NUMBER/BuildErrors.txt" ../builds/$BUILD_NUMBER/mails/BuildErrorMail.txt
+	echo buildError : $BuildErrors
+	sed -i "s/@BuildErrors@/$BuildErrors/"  ../builds/$BUILD_NUMBER/mails/BuildErrorMail.txt
+	
+	MailAdress="";
+	IFS=',' read -a array <<< "$BuildFailMail"
+    for element in "${array[@]}"
+	do
+		MailAdress="$MailAdress""$element@suntecgroup.com "
+	done
+	echo mailing build erros to $MailAdress
+	mailx -s " $JOB_NAME : Compilation errors (full set)" $MailAdress <../builds/$BUILD_NUMBER/mails/BuildErrorMail.txt
+	echo " Build error exists , So the build gets failed."
+	MailAdress="";
+	IFS=',' read -a array <<< "$ReleaseMail"
+    for element in "${array[@]}"
+	do
+		MailAdress="$MailAdress""$element@suntecgroup.com "
+	done
+	echo " Build error exists , So the build gets failed."
+	exit 1
+fi	
