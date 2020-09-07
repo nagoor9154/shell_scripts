@@ -1,0 +1,55 @@
+Introduction to DevOps
+=======================
+
+	--> What is DevOps?	
+	--> Dev and Ops	
+	--> DevOps definitions, Software Development Life Cycle and main objectives of the DevOps	
+	--> Prerequisites for DevOps	
+	--> Tools (Git, Mven, Jenkins, Ansible, Docker and so on.)	
+	--> Continuous Integration and Development 
+	
+LINUX
+=====
+Background of Linux and how it works.
+Basic commands in Linux
+
+
+GIT (Version Control)
+=======================
+	Topics:
+	--> What is version control?
+	--> What is Git?
+	--> Centralized vs distributed version control. ...
+	--> Why Git?
+	
+	Hands-on:
+	--> GIT Installation, Version Control, Working with remote repository	
+	--> Install Git and Git account.
+	--> git global setup.
+	--> Common commands in Git.
+	--> The github workflow. ...
+		
+		--> Git Fork and clone
+		--> Branches (create, remove etc..)
+		--> Git commands (add, commit, push, pull, fecth tags, etc..)
+		--> Git merge and conflicts
+		--> Git overwiew.
+	--> Introduction of GitLab (additional topic)
+	==> GIT INTERVIEW QUESTIONS
+	
+MAVEN (Build Tool)	
+=========================
+	--> Introductionof Apache Maven
+	--> Installing Apache Maven
+	--> Maven Build Lifecycle
+			compile — compiles the source code
+			test — executes unit test cases
+			package — bundles the compiled code (Ex: war / jar)
+			install — stores the built package in local Maven repository
+			deploy — store in remote repository for sharing
+	--> Maven Repository
+	--> POM Example
+	--> Maven Dependencies
+	--> Maven Plugins
+	--> Maven Project Structure 	
+
